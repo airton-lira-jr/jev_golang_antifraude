@@ -5144,3 +5144,30 @@ git commit -m "docs: registra o resultado do aceite do dashboard"
 ```
 
 ---
+
+## Registro do aceite do dashboard (2026-09-30)
+
+Aceite feito no Chrome, contra o backend do plano 1 rodando no compose. Como no backend, o modelo foi um Ollama falso e os dados foram um CSV sintético de 60000 linhas no formato do PaySim. Por isso os números de tempo e de métricas não servem de referência.
+
+O que passou:
+- Passo 1: `make lint-py` e `make test-py` limpos.
+- Passo 2: o topo mostra o modelo com o aviso de que não é a Jev, o resumo do dataset e os seletores preenchidos.
+- Passo 3: "Comparar com e sem grafo" com n=200 mostrou o andamento, trocou A e B para as duas execuções novas, trouxe as colunas A, B e "Diferença (B menos A)" com `p.p.` e a precisão reprojetada com a prevalência real. O limiar em 0 e em 1 não quebra e usa a convenção de divisão por zero. Barras finas, legendas sem encostar nos títulos e as cores de A e B distinguíveis.
+- Passo 4: cartões de A e B, percentis na largura toda e os dois histogramas. Com A sem grafo, o Neo4j só mostra a série de B.
+- Passo 5: o sorteio preenche step e seq, o veredito sai com palavra e cor, e o replay bate com as features do `results.jsonl` (conferido também por script em três casos, inclusive um com ciclo detectado). Origem e destino vazios mostram a mensagem da API sem quebrar a tela.
+- Passo 6: fidelidade com vírgula decimal, regras legíveis, gráficos na largura toda e o aviso de que as quantidades são da amostra. Trocar o alvo para o gabarito e a profundidade para 2 e 5 funciona, mas o CSV sintético só tem sinal no valor, então a árvore fica em 2 perfis e o limite de folhas não foi exercitado na tela (os testes unitários cobrem).
+- Passo 7: com a API parada o topo vira "Não consegui falar com a API" e as abas avisam. Ao religar e clicar em "Atualizar" tudo volta.
+- Passo 8: benchmark de 2000 com `tev1:4b`, pelo botão "Rodar": cerca de 15,6 s sem grafo (129 tps) e 16,5 s com grafo (129 tps), limitado pelo modelo falso. As 4 abas ficaram coerentes e o replay reproduziu as features. `make lint`, `make test-go`, `make test-integration`, `make lint-py` e `make test-py` passaram (122 testes Python).
+
+O que o aceite achou e foi corrigido:
+- **Primeiro uso**: sem nenhuma execução, os seletores A e B continuam vazios, o evento de mudança deles não dispara e a Aba 1 ficava com o vazio cru do Gradio (tabela "1 2 3" e gráficos em branco) em vez de "rode um benchmark primeiro". A Aba 1 agora também roda no fim de `load` e `refresh` quando nada está escolhido. Teste novo em `tests/test_app.py`, conferido no navegador.
+
+Observações que ficam anotadas:
+- Uma vez, digitar `1` no campo numérico do limiar não recalculou a tabela. Não se repetiu em quatro tentativas seguintes. O slider recalcula ao soltar (`release`), então vale ficar de olho.
+- A barra de ferramentas do Plotly cobre parte da legenda enquanto o mouse está sobre o gráfico.
+- O par padrão de A e B pega a execução mais recente de cada tipo. Com execuções de tamanhos diferentes (por exemplo n=2000 sem grafo e n=10 com grafo) a tela abre com o aviso de interseção pequena.
+- O Gradio 5.50 avisa no log que os parâmetros `theme`, `css`, `js` e `head` do `Blocks` e o `show_api` do `launch` mudam de lugar no Gradio 6. Não afeta a versão fixada.
+
+Falta para quem tem o dataset e o modelo reais: repetir os passos 3 a 6 com o Ollama de verdade (as latências e os histogramas vão ficar bem diferentes), com o PaySim inteiro e n grande (o tempo de montar tabelas e gráficos com 500 mil linhas), e conferir em leitores de tela e em outros navegadores além do Chrome.
+
+---
