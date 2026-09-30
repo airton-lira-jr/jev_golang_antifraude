@@ -1,6 +1,6 @@
 GO ?= go
 
-.PHONY: up down seed lint lint-py setup-py test-go test-integration test-py smoke
+.PHONY: up down seed ollama lint lint-py setup-py test-go test-integration test-py smoke
 
 # Sobe o Neo4j e a API (constrói a imagem se preciso) e espera ficarem saudáveis.
 up:
@@ -8,6 +8,11 @@ up:
 
 down:
 	docker compose down
+
+# Sobe o Ollama num container avulso e baixa os modelos (alternativa a instalar no host).
+# Usa a GPU da NVIDIA sozinho quando o Docker tem o runtime dela.
+ollama:
+	./scripts/ollama-docker.sh
 
 # Carrega o CSV no Neo4j. Pode rodar de novo para retomar de onde parou.
 seed:

@@ -16,6 +16,7 @@ A spec em `docs/superpowers/specs/2026-09-30-fraud-detector-jev-design.md` é a 
 make up                 # sobe Neo4j, API e dashboard (constrói as imagens) e espera ficarem saudáveis
 make seed               # carrega o CSV no Neo4j (pode rodar de novo para retomar)
 make down
+make ollama             # Ollama em container avulso (sem sudo), com os modelos tev1. Liga a GPU da NVIDIA sozinho se o Docker tiver o runtime
 
 make lint               # gofmt e go vet, com e sem a tag integration
 make test-go            # go test -race ./...
@@ -91,7 +92,9 @@ Visual: execução A é `#1e55ff` e B é `#e86835` (par validado), paleta `ASAAS
 ## Armadilhas
 
 - O build das imagens usa `network: host`, porque o DNS IPv6 do host não tem rota dentro do container de build. Não remova.
-- O Ollama roda no host e precisa escutar em `0.0.0.0:11434` para o container chegar nele (`host.docker.internal`).
+- O Ollama roda no host e precisa escutar em `0.0.0.0:11434` para o container chegar nele (`host.docker.internal`). Sem sudo, `make ollama` sobe um container avulso que abre a porta só em `172.17.0.1`, a ponte do Docker para a qual o `host.docker.internal` aponta.
+- O `tev1` exige Ollama 0.35 ou mais novo. A imagem `ollama/ollama` antiga do cache local é 0.30 e recusa o modelo com "requires a newer version".
+- GPU: só o driver proprietário da NVIDIA com o `nvidia-container-toolkit` acelera de verdade. O Vulkan com o driver livre (`nouveau`, NVK) enxerga a GPU mas mediu 4 vezes mais lento que a CPU numa RTX 3050. Não use.
 - Ao trocar de dataset, rode `docker compose down -v` antes do `make seed`. Sem isso o seeder acha que é a mesma carga e tenta retomar.
 - A pasta `data/` precisa existir antes do `docker compose up`, senão o Docker a cria como root.
 - As receitas do `Makefile` usam TAB.

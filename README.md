@@ -134,6 +134,51 @@ Teste direto no host:
 curl http://localhost:11434/api/tags
 ```
 
+### Sem sudo: Ollama em container
+
+Se você não pode (ou não quer) instalar o Ollama no host, rode ele num container avulso, fora do compose:
+
+```bash
+make ollama
+```
+
+O script `scripts/ollama-docker.sh` baixa a imagem mais recente, sobe o container `ollama`, baixa o `tev1:0.8b` e o `tev1:4b` e lista os modelos. Para outros modelos, chame o script direto: `scripts/ollama-docker.sh tev1:4b nimble`. Duas escolhas dele:
+
+- A porta só abre em `172.17.0.1`, a ponte padrão do Docker. O `host.docker.internal` aponta para ela, então a API alcança o Ollama sem nenhuma configuração extra, e a rede local não alcança.
+- O container usa o DNS `1.1.1.1` e `8.8.8.8`, porque em alguns setups o DNS do host não responde de dentro do container e o download dos modelos falha com `i/o timeout`. Para usar o DNS do host, rode com `OLLAMA_DNS=`.
+
+### Usar a GPU da NVIDIA (Linux)
+
+Sem o driver proprietário da NVIDIA o Ollama roda na CPU, que funciona, mas é lenta. Para usar a GPU:
+
+```bash
+# 1. Driver proprietário. O Ubuntu escolhe o módulo já assinado para o seu kernel,
+#    então funciona com o Secure Boot ligado. Reinicie no fim.
+sudo ubuntu-drivers install
+sudo reboot
+
+# 2. Depois de reiniciar, confira que a GPU aparece.
+nvidia-smi
+
+# 3. Runtime da NVIDIA para o Docker (guia oficial: nvidia-container-toolkit).
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+sudo apt-get update
+sudo apt-get install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+
+# 4. Recrie o Ollama. O script liga a GPU sozinho quando o Docker tem o runtime da NVIDIA.
+make ollama
+docker exec ollama ollama ps        # a coluna PROCESSOR precisa mostrar 100% GPU
+```
+
+Se o Ubuntu pedir para cadastrar uma chave (MOK) na instalação do driver, guarde a senha que ele pedir e confirme na tela azul que aparece ao reiniciar.
+
+**Não use o driver livre (`nouveau`) com Vulkan.** Num teste numa RTX 3050 6GB Laptop, o mesmo benchmark de 30 transações com `tev1:0.8b` teve p50 de 15,1 s por transação nessa combinação, contra 3,5 s só na CPU. Ela funciona, mas é bem mais lenta.
+
+Uma GPU com 6 GB de memória de vídeo tem pouca folga para o `tev1:4b` (4,5 GB) e provavelmente não comporta o `nimble` (9B) inteiro. Confira com `docker exec ollama ollama ps`: se a coluna PROCESSOR mostrar uma divisão entre CPU e GPU, parte do modelo ficou na CPU.
+
 ## 4. Subir o Neo4j e a API
 
 ```bash
@@ -352,4 +397,4 @@ Uma regra é inegociável: nenhuma query de feature pode ler o gabarito (`isFrau
 
 ## Licença
 
-Ainda não definida. Antes de publicar ou aceitar contribuições externas, escolha uma licença e acrescente um arquivo `LICENSE`.
+MIT. O texto completo está no arquivo [LICENSE](LICENSE). O dataset PaySim não faz parte do repositório e tem a licença própria dele (veja a página do Kaggle antes de redistribuir).
