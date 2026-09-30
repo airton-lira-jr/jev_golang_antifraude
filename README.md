@@ -6,6 +6,33 @@ O Go lê o dataset PaySim, monta uma amostra, enriquece cada transação com mé
 
 > **Aviso importante:** o modelo usado aqui **não é a Jev da TypeSafe**. São modelos abertos que falam o mesmo protocolo dela (`/v1/systemone`, pergunta do tipo `noul`): `tev1:4b` e `tev1:0.8b` da Together AI, e `nimble` da Bespoke Labs. Os números medem esses modelos. Cada execução grava qual modelo foi usado.
 
+## Sumário
+
+- [Início rápido](#início-rápido)
+- [Como funciona](#como-funciona) e [Arquitetura](#arquitetura)
+- [Pré-requisitos](#pré-requisitos)
+- Passo a passo: [1. PaySim](#1-baixar-o-paysim), [2. `.env`](#2-configurar-o-env), [3. Ollama](#3-instalar-o-ollama-e-baixar-o-modelo), [4. Subir](#4-subir-o-neo4j-e-a-api), [5. Carregar o grafo](#5-carregar-o-grafo), [6. Benchmark](#6-rodar-um-benchmark), [7. Dashboard](#7-abrir-o-dashboard)
+- [Como ler os resultados](#como-ler-os-resultados), [Trocar a pergunta](#trocar-a-pergunta-feita-ao-modelo) e [Limitações](#limitações-leia-antes-de-tirar-conclusão)
+- Referência: [Variáveis de ambiente](#variáveis-de-ambiente) e [API em resumo](#api-em-resumo)
+- [Desenvolvimento](#desenvolvimento), [Contribuindo](#contribuindo) e [Solução de problemas](#solução-de-problemas)
+- [Documentação do projeto](#documentação-do-projeto) e [Licença](#licença)
+
+## Início rápido
+
+Com Docker, o Ollama instalado no host e o CSV do PaySim em mãos (cada passo está explicado nas seções abaixo):
+
+```bash
+mkdir -p data && mv ~/Downloads/PS_*.csv data/transactions.csv   # passo 1
+cp .env.example .env                                              # passo 2: troque a NEO4J_PASSWORD
+ollama pull tev1:4b                                               # passo 3: com o Ollama escutando em 0.0.0.0
+make up                                                           # passo 4: Neo4j, API e dashboard
+make seed                                                         # passo 5: carrega o grafo
+make smoke ARGS="2000 tev1:4b false"                              # passo 6: sem grafo
+make smoke ARGS="2000 tev1:4b true"                               # passo 6: com grafo
+```
+
+Depois abra o dashboard em http://127.0.0.1:7860.
+
 ## Como funciona
 
 1. O Go faz uma passada no CSV e monta uma amostra **estratificada** (você escolhe a % de fraude).
@@ -14,10 +41,32 @@ O Go lê o dataset PaySim, monta uma amostra, enriquece cada transação com mé
 4. Cada resultado vai para `runs/<id>/results.jsonl` e o resumo para `summary.json`.
 5. Você roda duas vezes com a mesma seed, uma sem grafo e outra com, e compara.
 
+## Arquitetura
+
+```text
+PaySim CSV --> seeder --> Neo4j  (contas e transferências)
+                            ^
+                            | features, só com o passado da transação
+                            |
+            +---------------+----------------+
+            |   API em Go (fraud-api, :8080) |--> Ollama no host (/v1/systemone)
+            +---------------+----------------+
+                            |  REST                     |
+                            v                           v
+          dashboard Gradio (:7860)          runs/<id>/results.jsonl e summary.json
+```
+
+- **Seeder:** lê o CSV em streaming e carrega contas e transferências no Neo4j.
+- **API em Go:** monta a amostra, roda o pipeline (Neo4j, modelo e coletor em paralelo) e serve a API REST. Uma execução por vez.
+- **Neo4j:** calcula as features de grafo em Cypher ao vivo, sempre só com o passado da transação.
+- **Ollama:** roda no host, fora do compose, e responde a pergunta `is_fraud`.
+- **Dashboard:** cliente fino da API, em Python. Nunca lê arquivo do backend.
+
 ## Pré-requisitos
 
 - Docker com Docker Compose.
 - Go 1.27 ou mais novo (só para rodar os testes e o lint fora do Docker).
+- Python 3.12 (só para rodar os testes e o dashboard fora do Docker).
 - Ollama 0.35 ou mais novo, instalado no host (fora do compose).
 - O CSV do PaySim (veja o passo 1).
 - Opcional: driver da NVIDIA. Sem ele o Ollama roda na CPU, que funciona mas é mais lento.
@@ -204,6 +253,31 @@ O mesmo texto vai nas duas variantes do benchmark (com e sem grafo), para a úni
 - **Ordem dentro de um mesmo `step`.** Tratamos a ordem das linhas do arquivo como ordem de chegada. É uma premissa.
 - **Velocidade.** A latência do modelo depende do seu hardware. Ajuste `max_inflight` olhando o TPS e o P95.
 
+## Variáveis de ambiente
+
+As do `.env` (leia o `.env.example`):
+
+| Variável | Padrão | O que faz |
+| --- | --- | --- |
+| `NEO4J_PASSWORD` | sem padrão (obrigatória) | Senha do Neo4j, com pelo menos 8 caracteres |
+| `JEV_MODEL` | `tev1:4b` | Modelo padrão do Ollama |
+| `JEV_BASE_URL` | `http://host.docker.internal:11434` | Onde o Ollama está, visto de dentro do container |
+| `JEV_MAX_INFLIGHT` | `4` | Chamadas simultâneas ao modelo (de 1 a 64) |
+| `DATA_DIR` | `./data` | Pasta do CSV no host |
+| `DATA_FILE` | `transactions.csv` | Nome do CSV dentro dessa pasta |
+
+Avançadas da API (o compose não repassa estas. Para mudar, acrescente na seção `environment` do serviço `fraud-api`):
+
+| Variável | Padrão | O que faz |
+| --- | --- | --- |
+| `HTTP_ADDR` | `:8080` | Endereço da API |
+| `JEV_TIMEOUT` | `30s` | Tempo máximo de cada chamada ao modelo |
+| `NEO4J_QUERY_TIMEOUT` | `2s` | Tempo máximo de cada consulta de features |
+| `MAX_SAMPLE_SIZE` | `500000` | Maior `n` aceito em `POST /benchmarks` |
+| `MAX_WORKERS` | `256` | Maior `workers` aceito em `POST /benchmarks` |
+
+Do dashboard: `BACKEND_API_URL` (padrão `http://127.0.0.1:8080`, e no compose `http://fraud-api:8080`), `GRADIO_SERVER_NAME` (padrão `127.0.0.1`) e `GRADIO_SERVER_PORT` (padrão `7860`).
+
 ## API em resumo
 
 | Rota | Para que serve |
@@ -222,7 +296,7 @@ Os erros vêm sempre como `{"error": {"code": "...", "message": "..."}}`.
 ## Desenvolvimento
 
 ```bash
-make lint              # gofmt e go vet
+make lint              # gofmt e go vet, com e sem a tag integration
 make test-go           # testes unitários, com -race
 make test-integration  # sobe um Neo4j descartável e testa as queries de verdade
 make setup-py          # cria o ambiente Python do dashboard
@@ -243,6 +317,18 @@ web_dashboard/          dashboard Gradio (client, analysis, surrogate, plots, ha
 docs/superpowers/       spec e planos
 ```
 
+Os testes de integração têm a tag `integration` e limpam o grafo, então só rode com `make test-integration`, que usa um Neo4j descartável em outra porta. Nunca aponte esses testes para a base do compose.
+
+## Contribuindo
+
+1. Crie uma branch a partir da principal.
+2. Escreva o teste primeiro, veja falhar e só então implemente.
+3. Antes de abrir o pull request, rode `make lint lint-py test-go test-py test-integration`.
+4. Siga o estilo do projeto: textos, comentários, mensagens e commits em português informal, sem emoji, sem travessão e sem ponto e vírgula em texto. Identificadores em inglês.
+5. Commits com prefixo (`feat:`, `fix:`, `docs:`) e uma mensagem que diga o porquê.
+
+Uma regra é inegociável: nenhuma query de feature pode ler o gabarito (`isFraud`, `isFlagged`) nem transações do futuro. Há testes que travam isso. Veja o `CLAUDE.md` para o resto das regras de arquitetura.
+
 ## Solução de problemas
 
 - **`defina NEO4J_PASSWORD no arquivo .env`**: você ainda não criou o `.env`. Rode `cp .env.example .env`.
@@ -257,3 +343,13 @@ docs/superpowers/       spec e planos
 - **O dashboard abre e mostra "Não consegui falar com a API"**: a API não está no ar. Confira `docker compose ps` e `curl http://127.0.0.1:8080/healthz`. Depois de subir a API, clique em "Atualizar".
 - **As abas de gráficos aparecem com a largura errada**: abra a aba de novo (elas se redesenham ao abrir). Se persistir, recarregue a página.
 - **O botão "Rodar" não faz nada logo depois de abrir a página**: a página recarrega uma vez para fixar o tema claro. Clique de novo.
+
+## Documentação do projeto
+
+- [Spec de design](docs/superpowers/specs/2026-09-30-fraud-detector-jev-design.md): a fonte de verdade das decisões.
+- [Plano do backend](docs/superpowers/plans/2026-09-30-fraud-detector-backend.md) e [plano do dashboard](docs/superpowers/plans/2026-09-30-fraud-detector-dashboard.md): o passo a passo de como foi construído, com o registro do aceite no fim de cada um.
+- [CLAUDE.md](CLAUDE.md): guia para agentes de código que trabalham neste repositório.
+
+## Licença
+
+Ainda não definida. Antes de publicar ou aceitar contribuições externas, escolha uma licença e acrescente um arquivo `LICENSE`.
