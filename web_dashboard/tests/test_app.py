@@ -115,6 +115,26 @@ def test_primeiro_uso_sem_nenhuma_execucao_nao_quebra_as_abas():
     assert "rode um benchmark" in aviso.lower()
 
 
+def test_primeiro_uso_desenha_a_aba_1_ao_abrir_e_ao_atualizar():
+    """Sem nenhuma execução os seletores continuam None, então o change deles não dispara e a
+    Aba 1 ficaria com o vazio cru do Gradio. Por isso ela também roda no fim de load e refresh."""
+    demo = novo_app(FakeClient())
+    evs = eventos(demo)
+    for nome, origem in (("tab1_load", "load"), ("tab1_refresh", "refresh")):
+        assert evs[nome].trigger_after == evs[origem]._id, nome
+        assert len(evs[nome].outputs) == len(evs["tab1"].outputs), nome
+        aviso = evs[nome].fn(None, None, 0.5)[0]
+        assert "rode um benchmark" in aviso.lower(), nome
+
+
+def test_com_execucao_escolhida_o_evento_encadeado_nao_redesenha_a_aba_1():
+    """O change dos seletores já desenha a Aba 1. O encadeado só cobre o primeiro uso."""
+    evs = eventos(novo_app())
+    saida = evs["tab1_load"].fn("run_20260930_160000_aaaa", "run_20260930_161000_bbbb", 0.5)
+    assert len(saida) == len(evs["tab1_load"].outputs)
+    assert all(item == gr.skip() for item in saida)
+
+
 def test_rodar_atualiza_o_andamento_e_no_fim_troca_a_e_b():
     client = FakeClient(running_polls=1)
     ev = eventos(novo_app(client))["run"]

@@ -251,8 +251,8 @@ def build_app(client: BackendClient) -> gr.Blocks:
             )
 
         cabecalho = [overview, run_a, run_b, model1, model3]
-        demo.load(on_load, [run_a, run_b], cabecalho, api_name="load")
-        refresh.click(on_load, [run_a, run_b], cabecalho, api_name="refresh")
+        ao_abrir = demo.load(on_load, [run_a, run_b], cabecalho, api_name="load")
+        ao_atualizar = refresh.click(on_load, [run_a, run_b], cabecalho, api_name="refresh")
 
         # Aba 1
         saidas1 = [
@@ -278,6 +278,23 @@ def build_app(client: BackendClient) -> gr.Blocks:
             api_name="tab1",
             show_progress="minimal",
         )
+
+        def on_tab1_primeiro_uso(a, b, limiar):
+            # Sem nenhuma execução os seletores continuam vazios, então o change deles não
+            # dispara e a Aba 1 ficaria com o vazio cru do Gradio. Quando já há escolha, o
+            # change desenha e aqui não se faz nada.
+            if a or b:
+                return [gr.skip()] * len(saidas1)
+            return on_tab1(a, b, limiar)
+
+        for gatilho, nome in ((ao_abrir, "tab1_load"), (ao_atualizar, "tab1_refresh")):
+            gatilho.then(
+                on_tab1_primeiro_uso,
+                [run_a, run_b, threshold],
+                saidas1,
+                api_name=nome,
+                show_progress="minimal",
+            )
 
         def on_run(
             modo,
