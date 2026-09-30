@@ -8464,3 +8464,33 @@ git commit -m "docs: registra o resultado do aceite do backend"
 ```
 
 ---
+
+## Registro do aceite do backend (2026-09-30)
+
+Aceite parcial. Rodou tudo o que dava sem `sudo` e sem o dataset real. Os números abaixo vêm de um ambiente sintético e não servem de referência de desempenho.
+
+O que foi feito de verdade:
+- Passo 1: `make lint`, `make test-go` e `make test-integration` passaram.
+- Passo 2: stack no ar com o CSV de 11 linhas. O seeder logou `contas=12` e `arestas=11`, e o `/info` trouxe `total_rows` 11, `fraud_rows` 1 e `max_step` 32.
+- Passo 4: smoke com e sem grafo, e todos os valores esperados bateram (`sample.n` 11, `fraud_shortfall` verdadeiro, soma das contagens igual a 11, Neo4j maior que zero só com grafo).
+- Passos 8, 9 e 10: cancelamento, 409 com execução ativa, replay do simulador com features idênticas às do `results.jsonl` (inclusive num caso com ciclo detectado), reinício limpo (`canceled`, sem `error`) e queda brusca com SIGKILL (`failed`, com a mensagem esperada e o aviso no log).
+
+O que foi substituído:
+- Passo 3 (Ollama real): o host não tem Ollama e a instalação pede `sudo`. No lugar entrou um Ollama falso em Python, que responde `/api/tags` e `/v1/systemone` com 30 ms de atraso fixo e nota 0,9 para valor acima de 200000. Ele validou o caminho de rede do container até o host e o contrato da API, mas não diz nada sobre a qualidade nem a latência de um modelo de verdade.
+- Passos 5 a 7 (PaySim real): o download do Kaggle exige login. No lugar entrou um CSV sintético de 60000 linhas no formato do PaySim (203 fraudes, 743 steps, 6500 contas), gerado por um script fora do repositório.
+
+Números do ambiente sintético:
+- Carga do grafo: 60000 arestas em 3 s.
+- 200 transações: a mesma amostra com e sem grafo (20 fraudes e 180 legítimas). Com grafo, Neo4j com p50 de 7,0 ms e p95 de 70,2 ms.
+- 2000 transações: 126,1 tps sem grafo e 126,1 tps com grafo (o limite era o modelo falso). Neo4j com p50 de 3,1 ms, p95 de 5,8 ms e p99 de 21,2 ms. Modelo falso com p50 de 31,5 ms e p95 de 33,1 ms.
+
+Observações:
+- Em amostras pequenas (11 ou 200 transações) o Neo4j ainda aparece frio na cauda. O aquecimento usa uma conta que não existe, então compila o plano mas não executa os operadores do Cypher. Com 2000 transações o efeito some.
+- O log do seeder imprime duas vezes a última linha de progresso da fase `edges`.
+
+Falta para quem tem o dataset e o modelo reais:
+- Passo 3: instalar o Ollama, baixar o modelo com `ollama pull` e liberar o `OLLAMA_HOST=0.0.0.0:11434`.
+- Passo 5: baixar o PaySim para `data/transactions.csv`, rodar `docker compose down -v`, `make up` e `make seed`, e anotar o tempo da carga.
+- Passos 6 e 7: repetir os benchmarks de 200 e 2000 com o modelo real e anotar `tps` e as latências para a Aba 2 do dashboard.
+
+---
