@@ -20,3 +20,7 @@ __pycache__/
 # editores
 .idea/
 .vscode/
+
+# worktrees e rascunhos das ferramentas do Claude Code
+.claude/
+.superpowers/
