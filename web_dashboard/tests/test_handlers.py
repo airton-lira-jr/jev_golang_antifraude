@@ -309,6 +309,33 @@ def test_sample_transaction_devolve_uma_linha_real_da_execucao():
     )
 
 
+def test_replay_settings_le_os_parametros_da_execucao_de_origem():
+    sem = make_summary(run_id="run_20260930_160000_aaaa", graph=False, model="nimble:latest")
+    sem["params"]["window_hours"], sem["params"]["cycle_max_hops"] = 48, 5
+    client = FakeClient(runs=[(sem, make_results(graph=False))])
+    assert handlers.replay_settings(client, "run_20260930_160000_aaaa") == {
+        "graph": False,
+        "window_hours": 48,
+        "cycle_max_hops": 5,
+        "model": "nimble:latest",
+    }
+
+
+def test_payload_do_replay_leva_os_parametros_da_execucao_so_quando_ha_seq():
+    cfg = {"graph": False, "window_hours": 48, "cycle_max_hops": 5, "model": "nimble:latest"}
+    com_seq = handlers.build_evaluate_payload(
+        "a", "b", "TRANSFER", 1, 5, 0, 0, 0, 0, 1029, "nimble:latest", 0.5, replay=cfg
+    )
+    assert com_seq["graph"] is False
+    assert com_seq["window_hours"] == 48 and com_seq["cycle_max_hops"] == 5
+    assert com_seq["model"] == "nimble:latest"
+
+    sem_seq = handlers.build_evaluate_payload(
+        "a", "b", "TRANSFER", 1, 5, 0, 0, 0, 0, None, "nimble:latest", 0.5, replay=cfg
+    )
+    assert not {"graph", "window_hours", "cycle_max_hops"} & set(sem_seq)
+
+
 def test_sample_transaction_sem_execucao_ou_vazia_vira_aviso():
     with pytest.raises(handlers.UserMessage):
         handlers.sample_transaction(FakeClient(runs=two_runs()), None)
@@ -361,6 +388,26 @@ def test_evaluate_view_legitima_conta_nova_e_modo_agora():
     )
     assert "nunca apareceu" in v.features and "Não" in v.features
     assert v.raw == {}
+
+
+def test_evaluate_view_sem_grafo_avisa_e_nao_mostra_features():
+    """O replay de uma execução sem grafo não consulta as features. A tela diz isso em vez
+    de mostrar zeros que parecem uma conta sem histórico."""
+    resp = evaluate_response(
+        graph=False,
+        graph_features={
+            "first_transfer_between_pair": False,
+            "dest_in_degree": 0,
+            "dest_fan_in_window": 0,
+            "dest_fan_out_window": 0,
+            "orig_fan_out_window": 0,
+            "dest_account_age_steps": None,
+            "cycle_detected": False,
+        },
+    )
+    v = handlers.evaluate_view(FakeClient(evaluate_response=resp), {"orig": "C1", "dest": "C2"})
+    assert "sem features de grafo" in v.notice
+    assert v.features == "" and "verdict-fraud" in v.verdict
 
 
 def test_evaluate_view_erro_da_api():

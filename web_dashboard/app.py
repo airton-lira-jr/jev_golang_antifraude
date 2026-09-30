@@ -8,7 +8,7 @@ import gradio as gr
 
 import handlers
 import plots
-from client import BackendClient
+from client import BackendClient, BackendError
 
 POLL_SECONDS = 1.0
 
@@ -191,6 +191,8 @@ def build_app(client: BackendClient) -> gr.Blocks:
                         model3 = gr.Dropdown(
                             label="Modelo", choices=[], value=None, allow_custom_value=True
                         )
+                        # configurações da execução de onde veio o sorteio (grafo, janela, saltos)
+                        replay_cfg = gr.State(None)
                         with gr.Row():
                             sample_btn = gr.Button("Sortear da Execução A")
                             eval_btn = gr.Button("Consultar modelo e Neo4j", variant="primary")
@@ -376,31 +378,43 @@ def build_app(client: BackendClient) -> gr.Blocks:
         # Aba 3
         campos = [orig, dest, tipo, amount, step, ob, oa, db, da, seq]
 
+        saidas_sorteio = [*campos, model3, replay_cfg]
+
         def on_sample(run_id):
             try:
                 valores = list(handlers.sample_transaction(client, run_id))
+                config = handlers.replay_settings(client, run_id)
             except handlers.UserMessage as aviso:
                 gr.Warning(str(aviso))
-                return tuple(gr.skip() for _ in campos)
+                return tuple(gr.skip() for _ in saidas_sorteio)
+            except BackendError as erro:
+                gr.Warning(str(erro))
+                return tuple(gr.skip() for _ in saidas_sorteio)
             valores[4], valores[9] = (
                 str(valores[4]),
                 str(valores[9]),
             )  # step e seq são caixas de texto
-            return tuple(valores)
+            # o modelo e as configurações da execução vão junto, para o replay reproduzir o score
+            modelo = gr.update(value=config["model"]) if config["model"] else gr.skip()
+            return (*valores, modelo, config)
 
-        sample_btn.click(on_sample, [run_a], campos, api_name="tab3_sample")
+        sample_btn.click(on_sample, [run_a], saidas_sorteio, api_name="tab3_sample")
 
         saidas3 = [notice3, verdict, features, timings, state_json, raw_json, plot_subgraph]
 
         def on_evaluate(*valores):
-            *formulario, modelo, limiar = valores
+            *formulario, modelo, limiar, config = valores
             try:
-                payload = handlers.build_evaluate_payload(*formulario, modelo, limiar)
+                payload = handlers.build_evaluate_payload(
+                    *formulario, modelo, limiar, replay=config
+                )
             except handlers.UserMessage as aviso:
                 return handlers.Tab3View.empty(f"**Erro:** {aviso}").as_tuple()
             return handlers.evaluate_view(client, payload).as_tuple()
 
-        eval_btn.click(on_evaluate, [*campos, model3, threshold], saidas3, api_name="tab3_evaluate")
+        eval_btn.click(
+            on_evaluate, [*campos, model3, threshold, replay_cfg], saidas3, api_name="tab3_evaluate"
+        )
 
         # Aba 4 (também redesenha ao abrir)
         saidas4 = [summary4, plot_importance, profiles, plot_counts, tree_text, importance_table]

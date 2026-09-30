@@ -553,8 +553,11 @@ def build_evaluate_payload(
     seq,
     model,
     threshold,
+    replay: dict | None = None,
 ) -> dict:
-    """Monta o corpo do POST /transactions/evaluate a partir dos campos da tela."""
+    """Monta o corpo do POST /transactions/evaluate a partir dos campos da tela. `replay` são
+    as configurações da execução de origem (veja `replay_settings`). Só valem com `seq`, porque
+    uma transação de agora não vem de execução nenhuma."""
     payload = {
         "orig": (orig or "").strip(),
         "dest": (dest or "").strip(),
@@ -569,12 +572,28 @@ def build_evaluate_payload(
     passo = _optional_int(step, "step")
     if passo is not None:
         payload["step"] = passo
-    replay = _optional_int(seq, "seq")
-    if replay is not None:
-        payload["seq"] = replay
+    numero_seq = _optional_int(seq, "seq")
+    if numero_seq is not None:
+        payload["seq"] = numero_seq
+        if replay:
+            for chave in ("graph", "window_hours", "cycle_max_hops"):
+                if chave in replay:
+                    payload[chave] = replay[chave]
     if model:
         payload["model"] = model
     return payload
+
+
+def replay_settings(client: BackendClient, run_id: str) -> dict:
+    """As configurações da execução que o replay precisa repetir para reproduzir o score:
+    se usou grafo, a janela, os saltos do ciclo e o modelo."""
+    params = client.get_run(run_id).get("params") or {}
+    return {
+        "graph": bool(params.get("graph", True)),
+        "window_hours": params.get("window_hours"),
+        "cycle_max_hops": params.get("cycle_max_hops"),
+        "model": params.get("model"),
+    }
 
 
 def sample_transaction(
@@ -634,10 +653,14 @@ def evaluate_view(client: BackendClient, payload: dict) -> Tab3View:
     except BackendError as exc:
         return Tab3View.empty(error_notice(exc))
     tempos = f"Neo4j: {fmt_num(resp['neo4j_ms'])} ms | Modelo: {fmt_num(resp['jev_ms'])} ms"
+    com_grafo = resp.get("graph", True)
     return Tab3View(
-        notice="",
+        notice=""
+        if com_grafo
+        else "Consulta **sem features de grafo**, igual à execução de origem. O state enviado "
+        "não tem a parte de grafo.",
         verdict=verdict_html(resp),
-        features=features_html(resp["graph_features"]),
+        features=features_html(resp["graph_features"]) if com_grafo else "",
         timings=tempos,
         state=resp["state"],
         raw=resp.get("raw_response") or {},

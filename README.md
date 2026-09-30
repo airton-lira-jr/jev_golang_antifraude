@@ -158,7 +158,7 @@ No topo você escolhe a **Execução A** (a base, normalmente sem grafo) e a **E
 
 - **Benchmark e impacto do grafo:** o botão "Rodar" no modo "Comparar com e sem grafo" faz duas execuções com a mesma seed, primeiro sem grafo (vira a A) e depois com grafo (vira a B), e mostra o andamento. Abaixo ficam as métricas lado a lado, a matriz de confusão, falsos positivos contra falsos negativos, ROC e PR, o F1 por limiar e as fraudes por tipo. A comparação usa só as transações que aparecem nas duas execuções.
 - **Performance e latência:** transações por segundo, tempo total, erros e tokens, e os percentis P50, P95 e P99 do Neo4j e do modelo em separado.
-- **Simulador:** digite uma transação, ou use "Sortear da Execução A" para preencher com uma real (aí o `seq` vai junto e a consulta vira um replay, só com o passado daquela transação). Com `seq` e `step` vazios, é uma transação hipotética "de agora". O resultado mostra o veredito, as features de grafo, os tempos, o `state` enviado, a resposta bruta e o subgrafo.
+- **Simulador:** digite uma transação, ou use "Sortear da Execução A" para preencher com uma real (aí o `seq` vai junto e a consulta vira um replay, só com o passado daquela transação). O sorteio também leva o modelo e as configurações da execução de origem (com ou sem grafo, janela e saltos do ciclo), para o score bater com o do benchmark. Numa execução sem grafo o replay também sai sem features de grafo, e a tela avisa. Com `seq` e `step` vazios, é uma transação hipotética "de agora". O resultado mostra o veredito, as features de grafo, os tempos, o `state` enviado, a resposta bruta e o subgrafo.
 - **Perfil transacional:** uma árvore rasa imita as decisões do modelo (ou o gabarito) e cada folha vira um perfil com regra em texto. A tela mostra a **fidelidade** da árvore e avisa quando ela explica mal o modelo. As quantidades são da amostra, não da base inteira.
 
 Para rodar o dashboard fora do Docker (por exemplo, para desenvolver):
@@ -215,7 +215,7 @@ O mesmo texto vai nas duas variantes do benchmark (com e sem grafo), para a úni
 | `GET /benchmarks/{id}` | Resumo e progresso |
 | `DELETE /benchmarks/{id}` | Cancela uma execução em andamento |
 | `GET /benchmarks/{id}/results` | Resultados em JSON Lines (só depois de terminar) |
-| `POST /transactions/evaluate` | Simulador de uma transação (com `seq` faz o replay de uma transação real) |
+| `POST /transactions/evaluate` | Simulador de uma transação (com `seq` faz o replay de uma transação real, e `graph`, `window_hours` e `cycle_max_hops` opcionais repetem a configuração da execução de origem) |
 
 Os erros vêm sempre como `{"error": {"code": "...", "message": "..."}}`.
 

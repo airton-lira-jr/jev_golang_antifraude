@@ -13,6 +13,9 @@ import (
 
 // EvaluateRequest é o corpo do POST /transactions/evaluate. Seq presente
 // significa replay de uma transação real. Step ausente usa DefaultStep.
+// Graph, WindowHours e CycleMaxHops são opcionais e existem para o replay
+// reproduzir a execução de origem: ausentes, valem consultar o grafo e os
+// padrões do servidor.
 type EvaluateRequest struct {
 	Orig              string   `json:"orig"`
 	Dest              string   `json:"dest"`
@@ -26,6 +29,9 @@ type EvaluateRequest struct {
 	Seq               *int64   `json:"seq"`
 	Model             string   `json:"model"`
 	Threshold         *float64 `json:"threshold"`
+	Graph             *bool    `json:"graph"`
+	WindowHours       *int     `json:"window_hours"`
+	CycleMaxHops      *int     `json:"cycle_max_hops"`
 }
 
 // EvaluateResponse é o que o simulador da Aba 3 mostra.
@@ -36,6 +42,7 @@ type EvaluateResponse struct {
 	Threshold     float64              `json:"threshold"`
 	Model         string               `json:"model"`
 	Replay        bool                 `json:"replay"`
+	Graph         bool                 `json:"graph"`
 	GraphFeatures domain.GraphFeatures `json:"graph_features"`
 	State         json.RawMessage      `json:"state"`
 	RawResponse   json.RawMessage      `json:"raw_response"`
@@ -108,6 +115,12 @@ func (e *Evaluator) validate(req EvaluateRequest) (step int, threshold float64, 
 			problems = append(problems, "threshold precisa estar entre 0 e 1")
 		}
 	}
+	if req.WindowHours != nil && (*req.WindowHours < 1 || *req.WindowHours > 744) {
+		problems = append(problems, fmt.Sprintf("window_hours precisa estar entre 1 e 744, veio %d", *req.WindowHours))
+	}
+	if req.CycleMaxHops != nil && (*req.CycleMaxHops < 1 || *req.CycleMaxHops > 5) {
+		problems = append(problems, fmt.Sprintf("cycle_max_hops precisa estar entre 1 e 5, veio %d", *req.CycleMaxHops))
+	}
 	if len(problems) > 0 {
 		return 0, 0, &ValidationError{Problems: problems}
 	}
@@ -133,17 +146,35 @@ func (e *Evaluator) Evaluate(ctx context.Context, req EvaluateRequest) (Evaluate
 		tx.Seq = *req.Seq
 	}
 
-	t0 := time.Now()
-	gf, err := e.Features.Features(ctx, domain.FeatureQuery{
-		Orig: req.Orig, Dest: req.Dest, BeforeSeq: beforeSeq, AtStep: step,
-		WindowHours: e.WindowHours, CycleMaxHops: e.CycleMaxHops,
-	})
-	neo4jMs := millis(time.Since(t0))
-	if err != nil {
-		return EvaluateResponse{}, &UpstreamError{Source: "neo4j", Err: err}
+	useGraph := req.Graph == nil || *req.Graph
+	windowHours, cycleMaxHops := e.WindowHours, e.CycleMaxHops
+	if req.WindowHours != nil {
+		windowHours = *req.WindowHours
+	}
+	if req.CycleMaxHops != nil {
+		cycleMaxHops = *req.CycleMaxHops
 	}
 
-	state := BuildState(tx, &gf)
+	// Sem grafo o benchmark manda o state sem features. O replay faz igual, senão o
+	// score não bateria com o do results.jsonl.
+	var gf domain.GraphFeatures
+	var stateFeatures *domain.GraphFeatures
+	var neo4jMs float64
+	if useGraph {
+		t0 := time.Now()
+		var err error
+		gf, err = e.Features.Features(ctx, domain.FeatureQuery{
+			Orig: req.Orig, Dest: req.Dest, BeforeSeq: beforeSeq, AtStep: step,
+			WindowHours: windowHours, CycleMaxHops: cycleMaxHops,
+		})
+		neo4jMs = millis(time.Since(t0))
+		if err != nil {
+			return EvaluateResponse{}, &UpstreamError{Source: "neo4j", Err: err}
+		}
+		stateFeatures = &gf
+	}
+
+	state := BuildState(tx, stateFeatures)
 	if !replay {
 		state.TransactionID = "TX_manual"
 	}
@@ -177,7 +208,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, req EvaluateRequest) (Evaluate
 		decision = "fraud"
 	}
 	return EvaluateResponse{
-		Decision: decision, IsFraud: isFraud, Noul: dec.Noul, Threshold: threshold, Model: model, Replay: replay,
+		Decision: decision, IsFraud: isFraud, Noul: dec.Noul, Threshold: threshold, Model: model, Replay: replay, Graph: useGraph,
 		GraphFeatures: gf, State: json.RawMessage(stateJSON), RawResponse: dec.Raw,
 		Neo4jMs: neo4jMs, JevMs: millis(dec.Latency), Subgraph: sub,
 	}, nil

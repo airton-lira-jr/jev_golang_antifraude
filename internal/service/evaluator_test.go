@@ -159,11 +159,66 @@ func TestEvaluateUsaOStepPadraoQuandoOPedidoNaoTraz(t *testing.T) {
 	}
 }
 
+// O replay só reproduz o score do benchmark se usar a janela e os saltos da execução de
+// origem, e não os padrões do servidor.
+func TestEvaluateUsaOsParametrosDaExecucaoDeOrigem(t *testing.T) {
+	m := novoAvaliador(0.8)
+	req := pedidoBase()
+	seq, janela, saltos := int64(1029), 48, 5
+	req.Seq, req.WindowHours, req.CycleMaxHops = &seq, &janela, &saltos
+
+	resp, err := m.ev.Evaluate(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.consulta.WindowHours != 48 || m.consulta.CycleMaxHops != 5 {
+		t.Errorf("consulta de features = %+v", m.consulta)
+	}
+	if !resp.Graph {
+		t.Error("sem o campo graph o padrão é consultar o grafo")
+	}
+}
+
+// Numa execução sem grafo o state do benchmark não leva features. O replay precisa mandar o
+// mesmo state, e não consultar o Neo4j para as features.
+func TestEvaluateSemGrafoNaoConsultaFeaturesEOStateSaiSemGrafo(t *testing.T) {
+	m := novoAvaliador(0.8)
+	req := pedidoBase()
+	seq, semGrafo := int64(1029), false
+	req.Seq, req.Graph = &seq, &semGrafo
+
+	resp, err := m.ev.Evaluate(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.feats.calls.Load() != 0 {
+		t.Error("sem grafo não pode consultar as features")
+	}
+	if resp.Graph || resp.GraphFeatures != (domain.GraphFeatures{}) || resp.Neo4jMs != 0 {
+		t.Errorf("resposta sem grafo = %+v", resp)
+	}
+	var estado map[string]any
+	if err := json.Unmarshal(resp.State, &estado); err != nil {
+		t.Fatalf("state deveria ser um objeto JSON: %v", err)
+	}
+	if estado["transaction_id"] != "TX_1029" || estado["graph_features"] != nil {
+		t.Errorf("state sem grafo = %v", estado)
+	}
+	if m.sub.beforeSeq != 1029 {
+		t.Errorf("o subgrafo segue disponível e respeita o seq, veio %+v", m.sub)
+	}
+}
+
 func TestEvaluateValidaOPedido(t *testing.T) {
 	m := novoAvaliador(0.5)
 	negativo, limiarAlto := int64(-1), 1.5
 	passoNegativo := -3
+	janelaZero, janelaGrande, saltosZero, saltosDemais := 0, 745, 0, 6
 	casos := map[string]func(*EvaluateRequest){
+		"janela zero":          func(r *EvaluateRequest) { r.WindowHours = &janelaZero },
+		"janela acima de 744":  func(r *EvaluateRequest) { r.WindowHours = &janelaGrande },
+		"saltos zero":          func(r *EvaluateRequest) { r.CycleMaxHops = &saltosZero },
+		"saltos acima de 5":    func(r *EvaluateRequest) { r.CycleMaxHops = &saltosDemais },
 		"origem vazia":         func(r *EvaluateRequest) { r.Orig = "  " },
 		"destino vazio":        func(r *EvaluateRequest) { r.Dest = "" },
 		"tipo inválido":        func(r *EvaluateRequest) { r.Type = "REFUND" },

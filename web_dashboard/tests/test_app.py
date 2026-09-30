@@ -184,14 +184,45 @@ def test_sortear_preenche_o_formulario_e_sem_execucao_avisa(monkeypatch):
     demo = novo_app()
     ev = eventos(demo)["tab3_sample"]
     valores = ev.fn("run_20260930_160000_aaaa")
-    assert len(valores) == len(ev.outputs) == 10
+    assert len(valores) == len(ev.outputs) == 12
     assert isinstance(valores[4], str) and isinstance(
         valores[9], str
     )  # step e seq são caixas de texto
     assert valores[4].isdigit() and valores[9].isdigit()
+    # o modelo e as configurações da execução de origem vão junto, para o replay reproduzir o score
+    assert valores[10]["value"] == "tev1:4b"
+    assert valores[11] == {
+        "graph": False,
+        "window_hours": 24,
+        "cycle_max_hops": 3,
+        "model": "tev1:4b",
+    }
 
     sem = ev.fn(None)
-    assert len(sem) == 10 and avisos and "Execução A" in avisos[0]
+    assert len(sem) == 12 and avisos and "Execução A" in avisos[0]
+
+
+def test_sortear_com_a_api_fora_do_ar_avisa_em_vez_de_estourar(monkeypatch):
+    avisos = []
+    monkeypatch.setattr(app.gr, "Warning", lambda msg, *a, **k: avisos.append(msg))
+    client = FakeClient(runs=two_runs())
+    client.errors["results"] = BackendError("Não consegui falar com a API", code="unreachable")
+    ev = eventos(novo_app(client))["tab3_sample"]
+    saida = ev.fn("run_20260930_160000_aaaa")
+    assert len(saida) == len(ev.outputs) and all(item == gr.skip() for item in saida)
+    assert avisos and "Não consegui falar com a API" in avisos[0]
+
+
+def test_consultar_um_replay_leva_os_parametros_da_execucao_de_origem():
+    client = FakeClient(evaluate_response=evaluate_response())
+    ev = eventos(novo_app(client))["tab3_evaluate"]
+    entradas = padrao(ev)
+    entradas[9] = "1029"  # seq
+    entradas[-1] = {"graph": False, "window_hours": 48, "cycle_max_hops": 5, "model": "tev1:4b"}
+    ev.fn(*entradas)
+    enviado = client.evaluated[0]
+    assert enviado["seq"] == 1029 and enviado["graph"] is False
+    assert enviado["window_hours"] == 48 and enviado["cycle_max_hops"] == 5
 
 
 def test_step_e_seq_comecam_vazios_e_nao_vao_no_pedido():
