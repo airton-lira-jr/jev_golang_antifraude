@@ -11,6 +11,8 @@ import plots
 from client import BackendClient, BackendError
 
 POLL_SECONDS = 1.0
+# de quanto em quanto tempo a lista de execuções é conferida (veja on_poll)
+POLL_SECONDS_LIST = 5.0
 
 # No Gradio 6 os parâmetros head, css, js e theme passam do Blocks() para o launch().
 HEAD = """
@@ -87,6 +89,8 @@ def build_app(client: BackendClient) -> gr.Blocks:
                 0.0, 1.0, value=0.5, step=0.01, label="Limiar de decisão", scale=2
             )
             refresh = gr.Button("Atualizar", scale=1)
+            # o que a tela já sabe sobre a lista de execuções, para o relógio só mexer se mudar
+            known_runs = gr.State(None)
 
         with gr.Tabs():
             with gr.Tab("Benchmark e impacto do grafo"):
@@ -238,23 +242,53 @@ def build_app(client: BackendClient) -> gr.Blocks:
 
         # ---------------------------------------------------------------- eventos
 
+        def assinatura(st):
+            return (st.overview, tuple(valor for _, valor in st.choices))
+
+        def atualizacao_das_caixas(st, a, b):
+            """Atualiza as opções e mantém a escolha atual, se ela ainda existir."""
+            validas = {valor for _, valor in st.choices}
+            dica = handlers.run_selector_hint(st.choices)
+            return (
+                gr.update(choices=st.choices, value=a if a in validas else st.a, info=dica),
+                gr.update(choices=st.choices, value=b if b in validas else st.b, info=dica),
+            )
+
         def on_load(a, b):
             st = handlers.initial_state(client)
-            validas = {valor for _, valor in st.choices}
-            novo_a = a if a in validas else st.a
-            novo_b = b if b in validas else st.b
+            caixa_a, caixa_b = atualizacao_das_caixas(st, a, b)
             return (
                 st.overview,
-                gr.update(choices=st.choices, value=novo_a),
-                gr.update(choices=st.choices, value=novo_b),
+                caixa_a,
+                caixa_b,
                 # um dict para cada campo: o Gradio consome o dict ao aplicar a atualização
                 gr.update(choices=st.models, value=st.default_model),
                 gr.update(choices=st.models, value=st.default_model),
+                assinatura(st),
             )
 
-        cabecalho = [overview, run_a, run_b, model1, model3]
+        def on_poll(a, b, conhecido):
+            """Roda de tempos em tempos. Uma execução que termina em segundo plano não muda o
+            valor dos seletores, então sem isto a lista só se atualizava ao clicar em
+            Atualizar. Só mexe na tela quando algo mudou, para não fechar uma caixa aberta."""
+            st = handlers.initial_state(client)
+            nova = assinatura(st)
+            if nova == conhecido:
+                return gr.skip(), gr.skip(), gr.skip(), gr.skip()
+            caixa_a, caixa_b = atualizacao_das_caixas(st, a, b)
+            return st.overview, caixa_a, caixa_b, nova
+
+        cabecalho = [overview, run_a, run_b, model1, model3, known_runs]
         ao_abrir = demo.load(on_load, [run_a, run_b], cabecalho, api_name="load")
         ao_atualizar = refresh.click(on_load, [run_a, run_b], cabecalho, api_name="refresh")
+        relogio = gr.Timer(POLL_SECONDS_LIST)
+        relogio.tick(
+            on_poll,
+            [run_a, run_b, known_runs],
+            [overview, run_a, run_b, known_runs],
+            api_name="poll",
+            show_progress="hidden",
+        )
 
         # Aba 1
         saidas1 = [

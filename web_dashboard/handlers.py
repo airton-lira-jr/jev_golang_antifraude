@@ -88,6 +88,15 @@ def run_choices(runs: list[dict]) -> list[tuple[str, str]]:
     return [(run_label(r), r["run_id"]) for r in runs]
 
 
+def run_selector_hint(choices: list) -> str:
+    """Texto de apoio das caixas A e B. Uma caixa vazia parece quebrada, então ela explica."""
+    if choices:
+        return ""
+    return (
+        "Nenhuma execução concluída ainda. Rode um benchmark abaixo e a lista se atualiza sozinha."
+    )
+
+
 def default_pair(runs: list[dict]) -> tuple[str | None, str | None]:
     """B é a execução mais nova. A é a mais nova das outras com o grafo diferente (e, na
     falta dela, a segunda mais nova)."""

@@ -4,6 +4,7 @@ import pytest
 import app
 import handlers
 from client import BackendError
+from tests.conftest import make_results, make_summary
 from tests.fakes import FakeClient, default_info, evaluate_response, two_runs
 
 
@@ -79,7 +80,7 @@ def test_abas_2_e_4_redesenham_ao_serem_abertas():
 def test_abrir_a_tela_escolhe_o_par_padrao_e_o_modelo():
     demo = novo_app()
     ev = eventos(demo)["load"]
-    overview, a, b, modelo1, modelo3 = ev.fn(*padrao(ev))
+    overview, a, b, modelo1, modelo3, conhecido = ev.fn(*padrao(ev))
     assert "estilo Jev" in overview
     assert a["value"] == "run_20260930_160000_aaaa" and b["value"] == "run_20260930_161000_bbbb"
     assert len(a["choices"]) == 2
@@ -91,9 +92,9 @@ def test_abrir_a_tela_escolhe_o_par_padrao_e_o_modelo():
 def test_atualizar_preserva_a_escolha_que_ainda_existe():
     demo = novo_app()
     ev = eventos(demo)["refresh"]
-    _, a, b, _, _ = ev.fn("run_20260930_161000_bbbb", "run_20260930_160000_aaaa")
+    _, a, b, _, _, _ = ev.fn("run_20260930_161000_bbbb", "run_20260930_160000_aaaa")
     assert a["value"] == "run_20260930_161000_bbbb" and b["value"] == "run_20260930_160000_aaaa"
-    _, a, b, _, _ = ev.fn("run_que_sumiu", None)
+    _, a, b, _, _, _ = ev.fn("run_que_sumiu", None)
     assert a["value"] == "run_20260930_160000_aaaa" and b["value"] == "run_20260930_161000_bbbb"
 
 
@@ -101,7 +102,7 @@ def test_abrir_a_tela_com_a_api_fora_do_ar_mostra_o_aviso():
     client = FakeClient()
     client.errors["info"] = BackendError("Não consegui falar com a API", code="unreachable")
     ev = eventos(novo_app(client))["load"]
-    overview, a, b, _, _ = ev.fn(*padrao(ev))
+    overview, a, b, _, _, _ = ev.fn(*padrao(ev))
     assert "Não consegui falar com a API" in overview and a["value"] is None and a["choices"] == []
 
 
@@ -113,6 +114,50 @@ def test_primeiro_uso_sem_nenhuma_execucao_nao_quebra_as_abas():
         assert len(resultado) == len(ev.outputs)
     aviso = eventos(demo)["tab1"].fn(None, None, 0.5)[0]
     assert "rode um benchmark" in aviso.lower()
+
+
+def test_caixa_vazia_explica_o_motivo_e_com_execucoes_a_dica_some():
+    vazia = eventos(novo_app(FakeClient()))["load"]
+    _, a, b, _, _, _ = vazia.fn(*padrao(vazia))
+    assert "Nenhuma execução concluída" in a["info"] and "Nenhuma execução concluída" in b["info"]
+
+    cheia = eventos(novo_app())["load"]
+    _, a, b, _, _, _ = cheia.fn(*padrao(cheia))
+    assert a["info"] == "" and b["info"] == ""
+
+
+def test_a_lista_de_execucoes_se_atualiza_sozinha_quando_uma_termina():
+    """Uma execução que termina em segundo plano (ou por fora da tela) não muda o valor dos
+    seletores. Sem isso a lista só se atualizava ao clicar em Atualizar, e a caixa parecia
+    quebrada."""
+    client = FakeClient()
+    evs = eventos(novo_app(client))
+    assert "tick" in {evento for _, evento in evs["poll"].targets}
+    *_, conhecido = evs["load"].fn(*padrao(evs["load"]))
+
+    # nada mudou: a tela fica quieta, sem fechar uma caixa que o usuário esteja usando
+    quieto = evs["poll"].fn(None, None, conhecido)
+    assert len(quieto) == len(evs["poll"].outputs) and all(item == gr.skip() for item in quieto)
+
+    # uma execução termina
+    resumo, tabela = two_runs()[1]
+    client.add_run(resumo, tabela)
+    overview, a, b, novo = evs["poll"].fn(None, None, conhecido)
+    assert [valor for _, valor in a["choices"]] == [resumo["run_id"]]
+    assert a["info"] == "" and novo != conhecido
+    assert b["value"] == resumo["run_id"]  # um único resultado vai para o B, como no default_pair
+
+
+def test_atualizar_sozinho_preserva_a_escolha_do_usuario():
+    client = FakeClient(runs=two_runs())
+    evs = eventos(novo_app(client))
+    *_, conhecido = evs["load"].fn(*padrao(evs["load"]))
+    nova = make_summary(run_id="run_20260930_170000_cccc", graph=True)
+    client.add_run(nova, make_results(seed=7, graph=True))
+
+    _, a, b, _ = evs["poll"].fn("run_20260930_160000_aaaa", "run_20260930_161000_bbbb", conhecido)
+    assert len(a["choices"]) == 3
+    assert a["value"] == "run_20260930_160000_aaaa" and b["value"] == "run_20260930_161000_bbbb"
 
 
 def test_primeiro_uso_desenha_a_aba_1_ao_abrir_e_ao_atualizar():

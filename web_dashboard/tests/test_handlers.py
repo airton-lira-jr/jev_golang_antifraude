@@ -309,6 +309,11 @@ def test_sample_transaction_devolve_uma_linha_real_da_execucao():
     )
 
 
+def test_dica_da_caixa_de_execucoes_so_aparece_quando_ela_esta_vazia():
+    assert "Nenhuma execução concluída" in handlers.run_selector_hint([])
+    assert handlers.run_selector_hint([("2026-09-30 | sem grafo", "run_x")]) == ""
+
+
 def test_replay_settings_le_os_parametros_da_execucao_de_origem():
     sem = make_summary(run_id="run_20260930_160000_aaaa", graph=False, model="nimble:latest")
     sem["params"]["window_hours"], sem["params"]["cycle_max_hops"] = 48, 5

@@ -248,7 +248,7 @@ Parâmetros (todos opcionais):
 
 O `make up` já sobe o dashboard. Abra http://127.0.0.1:7860 no navegador. O tema é claro de propósito, e a página recarrega uma vez ao abrir para fixar esse tema (um clique dado nessa primeira fração de segundo se perde).
 
-No topo você escolhe a **Execução A** (a base, normalmente sem grafo) e a **Execução B** (normalmente com grafo), e ajusta o **limiar de decisão**. Mexer no limiar recalcula tudo sem chamar o modelo de novo.
+No topo você escolhe a **Execução A** (a base, normalmente sem grafo) e a **Execução B** (normalmente com grafo), e ajusta o **limiar de decisão**. As duas são listas de seleção e não campos de texto: elas mostram as execuções já concluídas e se atualizam sozinhas a cada 5 segundos. Sem nenhuma execução concluída, a caixa diz isso. Com uma execução só, ela vai para o B e o A fica vazio. Mexer no limiar recalcula tudo sem chamar o modelo de novo.
 
 - **Benchmark e impacto do grafo:** o botão "Rodar" no modo "Comparar com e sem grafo" faz duas execuções com a mesma seed, primeiro sem grafo (vira a A) e depois com grafo (vira a B), e mostra o andamento. Abaixo ficam as métricas lado a lado, a matriz de confusão, falsos positivos contra falsos negativos, ROC e PR, o F1 por limiar e as fraudes por tipo. A comparação usa só as transações que aparecem nas duas execuções.
 - **Performance e latência:** transações por segundo, tempo total, erros e tokens, e os percentis P50, P95 e P99 do Neo4j e do modelo em separado.

@@ -28,6 +28,11 @@ class FakeClient:
         self._next = 0
         self.final_status = "done"
 
+    def add_run(self, summary, df):
+        """Simula uma execução que terminou depois de a tela abrir."""
+        self._runs[summary["run_id"]] = (summary, df)
+        self._order.insert(0, summary["run_id"])
+
     # ---- leitura
     def info(self):
         self._raise("info")
