@@ -1,0 +1,22 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+filterwarnings = [
+    # Avisos de depreciação que o próprio Gradio 5 emite ao montar componentes. O
+    # requirements.txt fixa o Gradio 5.50, então eles não afetam o projeto.
+    "ignore:The '.*' parameter in the Blocks constructor:DeprecationWarning",
+    "ignore:Passing a tuple to 'row_count':DeprecationWarning",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+# Linhas longas de texto (mensagens, strings de teste) ficam a cargo do formatador.
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+# Módulos do próprio dashboard, para o ruff ordenar os imports igual em qualquer máquina.
+known-first-party = ["client", "analysis", "surrogate", "plots", "handlers", "app", "tests"]
