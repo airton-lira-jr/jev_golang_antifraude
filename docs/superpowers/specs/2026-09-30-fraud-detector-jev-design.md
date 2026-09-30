@@ -45,7 +45,7 @@ Os resultados medem esses modelos. O README e o dashboard rotulam como "modelo a
 - O Ollama aceita `state` como string JSON no `/v1/systemone`. Os exemplos da doc usam string e objeto.
 - Algo perto de 9 milhões de contas e base de 2 a 3 GB no disco.
 - O tempo de carga (chute de 20 a 60 minutos) e o desempenho das queries de ciclo.
-- A tag `neo4j:5.20-community` existe e funciona.
+- A imagem `neo4j:5.26-community` funciona (foi trocada da 5.20 ao planejar: é a última LTS da linha 5.x e já estava baixada na máquina).
 - A velocidade dos modelos na RTX 3050 de 6 GB. Hoje o comando `nvidia-smi` não existe na máquina, então o driver provavelmente não está instalado e o Ollama rodaria na CPU.
 
 ## 4. Decisões fechadas
@@ -91,17 +91,22 @@ jev_golang_antifraude/
 │   ├── domain/            transaction.go, metrics.go
 │   ├── infrastructure/
 │   │   ├── csv/           streaming_reader.go
-│   │   ├── neo4j/         client.go, queries.go
-│   │   ├── jev/           client.go, mock_server.go (só para testes)
+│   │   ├── neo4j/         client.go, queries.go, features_queries.go, features.go, loader.go
+│   │   ├── jev/           client.go, models.go, jevtest/mock_server.go (só para testes)
 │   │   ├── runstore/      runstore.go (grava e lê execuções)
 │   │   └── web/           router.go
-│   ├── service/           enricher.go, features.go, sampler.go, benchmark_pipeline.go
+│   ├── service/           enricher.go, features.go, classifier.go, sampler.go, benchmark_pipeline.go,
+│   │                      run_manager.go, params.go, evaluator.go
 │   └── config/            config.go
-├── web_dashboard/         app.py, client.py, analysis.py, plots.py, requirements.txt, Dockerfile, tests/
+├── web_dashboard/         app.py, client.py, analysis.py, surrogate.py, plots.py, handlers.py,
+│                          requirements.txt, Dockerfile, tests/
 ├── data/                  transactions.csv (fora do git)
 ├── docs/superpowers/specs/
 ├── docker-compose.yml
 ├── Dockerfile.api
+├── config/                instructions.txt (a pergunta ao modelo, editável)
+├── scripts/               test-integration.sh, smoke_benchmark.sh
+├── testdata/              metrics_golden.json, mini_paysim.csv
 ├── Makefile
 ├── .env.example
 ├── go.mod
@@ -110,7 +115,7 @@ jev_golang_antifraude/
 
 Responsabilidades em `service`:
 
-- `features.go` define a interface `GraphFeatureSource` e os tipos das features.
+- `features.go` define as interfaces `GraphFeatureSource` e `SubgraphSource`. Os tipos das features (`GraphFeatures`, `FeatureQuery`, `Subgraph`) ficam em `internal/domain`, para evitar import circular.
 - `enricher.go` monta o `state` a partir da transação e das features.
 - `sampler.go` faz a amostra estratificada.
 - `benchmark_pipeline.go` orquestra os estágios e as métricas.
@@ -206,7 +211,7 @@ Na execução sem grafo, o bloco `graph_features` não existe.
 
 - Com grafo desligado, o estágio do Neo4j é pulado.
 - O parâmetro `workers` controla o pool do Neo4j. O chamador do modelo tem `max_inflight` próprio.
-- Antes de medir, 3 chamadas de aquecimento não entram na conta, para a carga fria do modelo não estragar os percentis.
+- Antes de medir, 3 chamadas de aquecimento ao modelo e, nas execuções com grafo, uma consulta falsa por worker ao Neo4j (em paralelo) não entram na conta. O aquecimento do Neo4j abre o pool de conexões e compila o plano da query, o que num teste ponta a ponta inflava o P50 para cerca de 600 ms. Se todo o aquecimento de um dos dois falhar, a execução nem começa.
 - A instrução da pergunta `is_fraud` é **idêntica** nas duas variantes, para que a única diferença seja a presença de `graph_features`. Texto padrão: "Determine se esta transação tem perfil típico de fraude bancária, esvaziamento ilícito de conta ou lavagem de dinheiro, com base em todos os dados fornecidos." O texto fica em arquivo editável.
 
 ### Medição
@@ -248,7 +253,7 @@ O Python recalcula as métricas de classificação quando o limiar do slider mud
 
 - `run_id`, `status`, `started_at`, `finished_at`, `duration_s`.
 - `params`: n, fraud_pct, seed, workers, model, base_url, graph, types, window_hours, cycle_max_hops, max_inflight, threshold.
-- `dataset` e `sample`: totais, fraudes, prevalência usada, tamanho real da amostra.
+- `sample`: tamanho pedido e real da amostra, fraudes e legítimas, se faltou fraude, e o universo elegível (`eligible_rows`, `eligible_fraud`) com a prevalência usada. Não existe um bloco `dataset` separado.
 - `counts`: tp, fp, tn, fn, errors.
 - `metrics`: accuracy, precision, recall, f1, fpr, precision_at_prevalence.
 - `latency`: p50, p95 e p99 de `neo4j_ms` e de `jev_ms`.
@@ -264,6 +269,8 @@ O Python recalcula as métricas de classificação quando o limiar do slider mud
 | `JEV_MODEL` | `tev1:4b` | Modelo padrão |
 | `JEV_MAX_INFLIGHT` | `4` | Chamadas simultâneas ao modelo |
 | `JEV_TIMEOUT` | `30s` | Timeout por requisição |
+| `JEV_INSTRUCTIONS_FILE` | vazio | Arquivo com o texto da pergunta. No compose aponta para `config/instructions.txt` |
+| `NEO4J_QUERY_TIMEOUT` | `2s` | Timeout de cada query de feature |
 | `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD` | ver `.env.example` | Conexão com o Neo4j |
 
 A rota `/v1/systemone` é fixa.
@@ -279,13 +286,13 @@ A rota `/v1/systemone` é fixa.
 
 | Método e rota | Função |
 | --- | --- |
-| `GET /healthz` | Confere Neo4j e alcance do Ollama, com mensagem que aponta o passo do README quando falha |
+| `GET /healthz` | Confere Neo4j e alcance do Ollama. Responde 503 só se o Neo4j caiu. Com o Ollama fora responde 200 `degraded`, com uma dica que aponta o passo do README |
 | `GET /info` | Modelo e destino em uso, modelos de decisão já baixados no Ollama (`nimble`, `tev1`), estatísticas do dataset e padrões da API |
 | `POST /benchmarks` | Inicia execução. Corpo com n, fraud_pct, seed, workers, model, graph, types, window_hours, cycle_max_hops, max_inflight, threshold |
 | `GET /benchmarks` | Lista execuções |
 | `GET /benchmarks/{id}` | Status, progresso e resumo |
 | `DELETE /benchmarks/{id}` | Cancela |
-| `GET /benchmarks/{id}/results` | JSONL em streaming |
+| `GET /benchmarks/{id}/results` | JSONL em streaming. Responde 409 enquanto a execução está rodando |
 | `POST /transactions/evaluate` | Aba 3. Recebe origem, destino, tipo, valor, `step`, quatro saldos e `seq` opcional |
 
 **Padrões iniciais do `POST /benchmarks`:** n=2000, fraud_pct=10, seed=42, workers=32, graph=true, types=[TRANSFER, CASH_OUT], window_hours=24, cycle_max_hops=3, max_inflight=4, threshold=0.5. Limites configuráveis para n (máximo 500 mil) e workers (máximo 256).
@@ -302,7 +309,7 @@ A rota `/v1/systemone` é fixa.
 
 ## 9. Dashboard Gradio
 
-**Arquivos:** `app.py` só monta a interface. `client.py` chama a API Go. `analysis.py` faz métricas, ROC/PR, varredura de limiar e a árvore. `plots.py` gera as figuras Plotly.
+**Arquivos:** `app.py` só monta a interface. `client.py` chama a API Go. `analysis.py` faz métricas, ROC/PR, varredura de limiar e tipos de fraude. `surrogate.py` faz a árvore da Aba 4. `plots.py` gera as figuras Plotly. `handlers.py` tem uma função pura por aba, testável sem abrir a tela.
 
 **Topo:** modelo e destino em uso, números do dataset, seletores de **Execução A** (base) e **Execução B**, e um slider de **limiar de decisão** (0,5). As abas 1, 2 e 4 usam A e B. O limiar recalcula tudo sem chamar o modelo.
 
@@ -310,7 +317,7 @@ A rota `/v1/systemone` é fixa.
 
 - Controles: N, % de fraude, workers, K horas, modelo, seed, tipos e modo (comparar com e sem grafo, só sem, só com). No modo comparar, dispara as duas execuções em sequência com a mesma seed, com progresso e cancelar.
 - Resultados lado a lado: TP, FP, TN, FN, acurácia, precisão, recall, F1 e taxa de falso positivo, com a diferença entre A e B, e a precisão reprojetada em destaque.
-- Gráficos: matrizes de confusão, ROC e PR sobrepostas com AUC, F1 por limiar, barras de FP contra FN e distribuição por tipo de fraude.
+- Gráficos: matrizes de confusão, ROC e PR sobrepostas com AUC, F1 por limiar, barras de FP contra FN e distribuição por tipo de fraude. A curva PR é reprojetada para a prevalência real (a partir de TPR e FPR), porque a curva crua de uma amostra estratificada seria otimista.
 - Avisos: erros nas execuções, interseção pequena entre A e B e modelos diferentes entre A e B.
 
 **Aba 2, performance e latência**
@@ -333,15 +340,17 @@ A rota `/v1/systemone` é fixa.
 - Saídas: importância das features, tabela de perfis (uma folha por perfil, com regra legível, quantidade, % de "Fraude" pelo modelo e % de fraude real), gráfico com a quantidade por perfil e a árvore em texto.
 - As quantidades são da amostra, e a tela deixa isso escrito, porque a amostra é estratificada.
 
-**Geral:** Gradio 5, tema `Soft`, textos em português informal, sem emoji.
+**Geral:** Gradio 5, tema `Soft` forçado em claro, textos em português informal, sem emoji. As cores seguem o padrão visual da Asaas: a execução A é `#1e55ff` e a B é `#e86835` (o par dos slots 1 e 2 da paleta foi reprovado pelo validador de paleta, por serem dois azuis quase iguais), o cinza `#767461` marca contexto e o `#FF365E` só aparece em linha de referência. Cada gráfico tem uma vista em tabela com os mesmos dados. As abas 2 e 4 se redesenham ao abrir, porque o Plotly calcula a largura ao criar o gráfico e numa aba escondida ela é zero. Step e seq do simulador são caixas de texto que começam vazias.
 
 ## 10. Infraestrutura, carga e README
 
 ### docker-compose.yml
 
-- **neo4j:** `neo4j:5.20-community`, memória com nomes do 5.x (heap 2G fixo, page cache 3G, ajustáveis), sem APOC (as queries são Cypher puro), senha vinda do `.env`, healthcheck com `cypher-shell`.
+- **neo4j:** `neo4j:5.26-community`, memória com nomes do 5.x (heap 2G fixo, page cache 3G, ajustáveis), sem APOC (as queries são Cypher puro), senha vinda do `.env`, healthcheck com `cypher-shell`.
 - **fraud-api:** imagem construída por `Dockerfile.api` (multi-stage), `extra_hosts: host.docker.internal:host-gateway`, CSV montado como somente leitura, volume `runs_data`, healthcheck em `/healthz`.
 - **seeder:** mesmo binário e imagem da API, `profiles: [seed]`, executado com `docker compose run --rm seeder`.
+- **Build:** os dois `build:` usam `network: host`, porque em alguns setups o DNS dentro do container de build é um IPv6 sem rota e o `go mod download` falha.
+- **Instruções:** `config/instructions.txt` é montado somente leitura na API e lido por `JEV_INSTRUCTIONS_FILE`.
 - **dashboard:** espera a API ficar saudável.
 - Volumes: `neo4j_data`, `neo4j_logs`, `runs_data`. O `neo4j_import` e o campo `version:` saem.
 - Todas as portas (7474, 7687, 8080, 7860) publicadas só em `127.0.0.1`.
@@ -375,7 +384,7 @@ O Ollama escuta só em `127.0.0.1` por padrão, e o container não chega nele. �
 
 ### Makefile
 
-`make up`, `make seed`, `make lint`, `make test-go`, `make test-integration`, `make test-py`.
+`make up`, `make down`, `make seed`, `make lint`, `make test-go`, `make test-integration`, `make test-py` e `make smoke`.
 
 ## 11. Testes e aceite
 
