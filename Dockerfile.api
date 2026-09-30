@@ -1,0 +1,19 @@
+# Build em duas etapas. A primeira compila os dois binários e a segunda leva só
+# eles para uma imagem pequena, rodando sem root.
+FROM golang:1.27-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd ./cmd
+COPY internal ./internal
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api \
+ && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/seeder ./cmd/seeder
+
+FROM alpine:3.20
+RUN addgroup -S app && adduser -S -G app -u 10001 app \
+ && mkdir -p /runs && chown app:app /runs
+COPY --from=build /out/api /app/api
+COPY --from=build /out/seeder /app/seeder
+USER app
+EXPOSE 8080
+ENTRYPOINT ["/app/api"]

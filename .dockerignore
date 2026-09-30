@@ -1,0 +1,10 @@
+.git
+.env
+.claude
+data
+runs
+docs
+testdata
+scripts
+web_dashboard
+*.md

@@ -1,0 +1,1 @@
+Determine se esta transação tem perfil típico de fraude bancária, esvaziamento ilícito de conta ou lavagem de dinheiro, com base em todos os dados fornecidos.
