@@ -91,7 +91,7 @@ curl http://localhost:11434/api/tags
 make up
 ```
 
-Isso constrói a imagem, sobe o Neo4j e a API e espera os dois ficarem saudáveis. Confira:
+Isso constrói as imagens, sobe o Neo4j, a API e o dashboard e espera todos ficarem saudáveis. Confira:
 
 ```bash
 curl -s http://127.0.0.1:8080/healthz
@@ -150,6 +150,24 @@ Parâmetros (todos opcionais):
 | `cycle_max_hops` | 3 | Tamanho máximo do ciclo procurado |
 | `threshold` | 0.5 | Acima disso o modelo decidiu "fraude" |
 
+## 7. Abrir o dashboard
+
+O `make up` já sobe o dashboard. Abra http://127.0.0.1:7860 no navegador. O tema é claro de propósito, e a página recarrega uma vez ao abrir para fixar esse tema (um clique dado nessa primeira fração de segundo se perde).
+
+No topo você escolhe a **Execução A** (a base, normalmente sem grafo) e a **Execução B** (normalmente com grafo), e ajusta o **limiar de decisão**. Mexer no limiar recalcula tudo sem chamar o modelo de novo.
+
+- **Benchmark e impacto do grafo:** o botão "Rodar" no modo "Comparar com e sem grafo" faz duas execuções com a mesma seed, primeiro sem grafo (vira a A) e depois com grafo (vira a B), e mostra o andamento. Abaixo ficam as métricas lado a lado, a matriz de confusão, falsos positivos contra falsos negativos, ROC e PR, o F1 por limiar e as fraudes por tipo. A comparação usa só as transações que aparecem nas duas execuções.
+- **Performance e latência:** transações por segundo, tempo total, erros e tokens, e os percentis P50, P95 e P99 do Neo4j e do modelo em separado.
+- **Simulador:** digite uma transação, ou use "Sortear da Execução A" para preencher com uma real (aí o `seq` vai junto e a consulta vira um replay, só com o passado daquela transação). Com `seq` e `step` vazios, é uma transação hipotética "de agora". O resultado mostra o veredito, as features de grafo, os tempos, o `state` enviado, a resposta bruta e o subgrafo.
+- **Perfil transacional:** uma árvore rasa imita as decisões do modelo (ou o gabarito) e cada folha vira um perfil com regra em texto. A tela mostra a **fidelidade** da árvore e avisa quando ela explica mal o modelo. As quantidades são da amostra, não da base inteira.
+
+Para rodar o dashboard fora do Docker (por exemplo, para desenvolver):
+
+```bash
+make setup-py
+BACKEND_API_URL=http://127.0.0.1:8080 web_dashboard/.venv/bin/python web_dashboard/app.py
+```
+
 ## Como ler os resultados
 
 O `summary.json` traz:
@@ -207,6 +225,9 @@ Os erros vêm sempre como `{"error": {"code": "...", "message": "..."}}`.
 make lint              # gofmt e go vet
 make test-go           # testes unitários, com -race
 make test-integration  # sobe um Neo4j descartável e testa as queries de verdade
+make setup-py          # cria o ambiente Python do dashboard
+make test-py           # testes do dashboard
+make lint-py           # ruff no dashboard
 ```
 
 Estrutura:
@@ -218,6 +239,7 @@ internal/domain         tipos e métricas
 internal/service        amostragem, pipeline, gerenciador de execuções, simulador
 internal/infrastructure csv, neo4j, jev (cliente do modelo), runstore, web
 testdata/               casos de teste compartilhados
+web_dashboard/          dashboard Gradio (client, analysis, surrogate, plots, handlers, app)
 docs/superpowers/       spec e planos
 ```
 
@@ -232,3 +254,6 @@ docs/superpowers/       spec e planos
 - **A carga caiu no meio**: rode `make seed` de novo.
 - **A pasta `data` ficou dona do root**: o Docker a criou porque ela não existia. Apague com `sudo rm -r data`, crie de novo e ponha o CSV.
 - **Porta ocupada (7474, 7687 ou 8080)**: outro serviço está usando. Pare o outro ou mude a porta no `docker-compose.yml`.
+- **O dashboard abre e mostra "Não consegui falar com a API"**: a API não está no ar. Confira `docker compose ps` e `curl http://127.0.0.1:8080/healthz`. Depois de subir a API, clique em "Atualizar".
+- **As abas de gráficos aparecem com a largura errada**: abra a aba de novo (elas se redesenham ao abrir). Se persistir, recarregue a página.
+- **O botão "Rodar" não faz nada logo depois de abrir a página**: a página recarrega uma vez para fixar o tema claro. Clique de novo.

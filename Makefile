@@ -1,6 +1,6 @@
 GO ?= go
 
-.PHONY: up down seed lint test-go test-integration test-py smoke
+.PHONY: up down seed lint lint-py setup-py test-go test-integration test-py smoke
 
 # Sobe o Neo4j e a API (constrói a imagem se preciso) e espera ficarem saudáveis.
 up:
@@ -25,6 +25,15 @@ test-go:
 # Sobe um Neo4j descartável e roda os testes de integração.
 test-integration:
 	./scripts/test-integration.sh
+
+# Cria o ambiente Python do dashboard (para rodar os testes e o app fora do Docker).
+setup-py:
+	python3 -m venv web_dashboard/.venv
+	web_dashboard/.venv/bin/pip install -r web_dashboard/requirements-dev.txt
+
+lint-py:
+	web_dashboard/.venv/bin/ruff check web_dashboard
+	web_dashboard/.venv/bin/ruff format --check web_dashboard
 
 test-py:
 	cd web_dashboard && .venv/bin/python -m pytest

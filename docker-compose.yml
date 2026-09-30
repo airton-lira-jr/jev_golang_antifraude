@@ -65,6 +65,23 @@ services:
       retries: 5
       start_period: 10s
 
+  dashboard:
+    build:
+      context: ./web_dashboard
+      dockerfile: Dockerfile
+      # Mesmo motivo do fraud-api: o build usa a rede do host para o pip.
+      network: host
+    image: fraud-detector-dashboard
+    container_name: fraud_dashboard
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:7860:7860"
+    environment:
+      BACKEND_API_URL: http://fraud-api:8080
+    depends_on:
+      fraud-api:
+        condition: service_healthy
+
   # Roda só quando pedido: docker compose run --rm seeder (ou make seed).
   seeder:
     build:

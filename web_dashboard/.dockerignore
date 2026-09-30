@@ -1,0 +1,8 @@
+.venv
+tests
+__pycache__
+.pytest_cache
+.ruff_cache
+*.md
+pyproject.toml
+requirements-dev.txt
