@@ -563,10 +563,15 @@ def build_evaluate_payload(
     model,
     threshold,
     replay: dict | None = None,
+    *,
+    payment_method=None,
+    channel=None,
+    category=None,
 ) -> dict:
     """Monta o corpo do POST /transactions/evaluate a partir dos campos da tela. `replay` são
     as configurações da execução de origem (veja `replay_settings`). Só valem com `seq`, porque
-    uma transação de agora não vem de execução nenhuma."""
+    uma transação de agora não vem de execução nenhuma. As três colunas opcionais do CSV só
+    vão no pedido quando preenchidas, e o replay precisa delas para reproduzir o score."""
     payload = {
         "orig": (orig or "").strip(),
         "dest": (dest or "").strip(),
@@ -578,6 +583,13 @@ def build_evaluate_payload(
         "dest_balance_after": float(dest_after or 0),
         "threshold": float(threshold),
     }
+    for chave, valor in (
+        ("payment_method", payment_method),
+        ("channel", channel),
+        ("category", category),
+    ):
+        if valor is not None and str(valor).strip():
+            payload[chave] = str(valor).strip()
     passo = _optional_int(step, "step")
     if passo is not None:
         payload["step"] = passo
@@ -609,7 +621,8 @@ def sample_transaction(
     client: BackendClient, run_id: str | None, rng: random.Random | None = None
 ) -> tuple:
     """Sorteia uma transação real da execução para preencher o formulário. Devolve
-    (orig, dest, tipo, valor, step, saldos..., seq)."""
+    (orig, dest, tipo, valor, step, saldos..., seq, forma de pagamento, canal, categoria).
+    As três últimas vêm vazias quando o CSV da execução não tinha essas colunas."""
     if not run_id:
         raise UserMessage("Escolha a Execução A para sortear uma transação dela.")
     df = analysis.scored(client.results(run_id))
@@ -627,7 +640,15 @@ def sample_transaction(
         float(linha["dest_balance_before"]),
         float(linha["dest_balance_after"]),
         int(linha["seq"]),
+        *(
+            _text_or_empty(linha.get(coluna))
+            for coluna in ("payment_method", "channel", "category")
+        ),
     )
+
+
+def _text_or_empty(valor) -> str:
+    return "" if valor is None or pd.isna(valor) else str(valor)
 
 
 @dataclass

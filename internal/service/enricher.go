@@ -9,17 +9,22 @@ import (
 // State é o que o modelo enxerga. Os nomes das contas, o gabarito e o seq não
 // vão para o modelo de propósito.
 type State struct {
-	TransactionID     string                `json:"transaction_id"`
-	Type              string                `json:"type"`
-	Amount            float64               `json:"amount"`
-	TimeStep          int                   `json:"time_step"`
-	OrigBalanceBefore float64               `json:"orig_balance_before"`
-	OrigBalanceAfter  float64               `json:"orig_balance_after"`
-	DestBalanceBefore float64               `json:"dest_balance_before"`
-	DestBalanceAfter  float64               `json:"dest_balance_after"`
-	BalanceDrop       float64               `json:"balance_drop"`
-	DestIsMerchant    bool                  `json:"dest_is_merchant"`
-	GraphFeatures     *domain.GraphFeatures `json:"graph_features,omitempty"`
+	TransactionID     string  `json:"transaction_id"`
+	Type              string  `json:"type"`
+	Amount            float64 `json:"amount"`
+	TimeStep          int     `json:"time_step"`
+	OrigBalanceBefore float64 `json:"orig_balance_before"`
+	OrigBalanceAfter  float64 `json:"orig_balance_after"`
+	DestBalanceBefore float64 `json:"dest_balance_before"`
+	DestBalanceAfter  float64 `json:"dest_balance_after"`
+	BalanceDrop       float64 `json:"balance_drop"`
+	DestIsMerchant    bool    `json:"dest_is_merchant"`
+	// As três vêm das colunas opcionais do CSV e só existem quando o arquivo as tem.
+	// Vão nas duas variantes (com e sem grafo), para o grafo seguir como a única diferença.
+	PaymentMethod string                `json:"payment_method,omitempty"`
+	Channel       string                `json:"channel,omitempty"`
+	Category      string                `json:"category,omitempty"`
+	GraphFeatures *domain.GraphFeatures `json:"graph_features,omitempty"`
 }
 
 // BuildState monta o state. Com gf nil (execução sem grafo) o bloco
@@ -36,6 +41,9 @@ func BuildState(tx domain.Transaction, gf *domain.GraphFeatures) State {
 		DestBalanceAfter:  tx.NewBalanceDest,
 		BalanceDrop:       tx.BalanceDrop(),
 		DestIsMerchant:    tx.DestIsMerchant(),
+		PaymentMethod:     tx.PaymentMethod,
+		Channel:           tx.Channel,
+		Category:          tx.Category,
 		GraphFeatures:     gf,
 	}
 }

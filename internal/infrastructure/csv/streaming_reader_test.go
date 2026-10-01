@@ -43,6 +43,42 @@ func TestStreamLeTransacoesEmOrdem(t *testing.T) {
 	}
 }
 
+func TestStreamLeAsColunasOpcionaisPeloNome(t *testing.T) {
+	const comExtras = "step,type,amount,nameOrig,oldbalanceOrg,newbalanceOrig,nameDest,oldbalanceDest,newbalanceDest,isFraud,isFlaggedFraud,paymentMethod,channel,category\n"
+	txs, err := coletar(t, comExtras+
+		"1,TRANSFER,100.5,C1,500.0,399.5,C2,0.0,100.5,0,0,PIX,MOBILE_APP,FOOD\n"+
+		"2,CASH_OUT,20,C3,20,0,M9,5,25,1,0,BOLETO,ATM,BILLS\n")
+	if err != nil {
+		t.Fatalf("erro inesperado: %v", err)
+	}
+	if txs[0].PaymentMethod != "PIX" || txs[0].Channel != "MOBILE_APP" || txs[0].Category != "FOOD" {
+		t.Errorf("colunas opcionais da primeira linha erradas: %+v", txs[0])
+	}
+	if txs[1].PaymentMethod != "BOLETO" || txs[1].Channel != "ATM" || txs[1].Category != "BILLS" {
+		t.Errorf("colunas opcionais da segunda linha erradas: %+v", txs[1])
+	}
+
+	// A ordem das colunas novas e a presença do isFlaggedFraud não importam.
+	const embaralhado = "step,type,amount,nameOrig,oldbalanceOrg,newbalanceOrig,nameDest,oldbalanceDest,newbalanceDest,isFraud,category,paymentMethod\n"
+	txs, err = coletar(t, embaralhado+"1,TRANSFER,10,C1,10,0,C2,0,10,0,HEALTH,DEBIT_CARD\n")
+	if err != nil {
+		t.Fatalf("erro inesperado: %v", err)
+	}
+	if txs[0].PaymentMethod != "DEBIT_CARD" || txs[0].Category != "HEALTH" || txs[0].Channel != "" {
+		t.Errorf("colunas fora de ordem erradas: %+v", txs[0])
+	}
+}
+
+func TestStreamSemAsColunasOpcionaisDeixaOsCamposVazios(t *testing.T) {
+	txs, err := coletar(t, cabecalho+"1,TRANSFER,10,C1,10,0,C2,0,10,0,0\n")
+	if err != nil {
+		t.Fatalf("erro inesperado: %v", err)
+	}
+	if txs[0].PaymentMethod != "" || txs[0].Channel != "" || txs[0].Category != "" {
+		t.Errorf("sem as colunas os campos deveriam ficar vazios: %+v", txs[0])
+	}
+}
+
 func TestStreamToleraCRLFELinhaEmBrancoNoFim(t *testing.T) {
 	conteudo := strings.ReplaceAll(cabecalho+
 		"1,TRANSFER,10,C1,10,0,C2,0,10,0,0\n"+

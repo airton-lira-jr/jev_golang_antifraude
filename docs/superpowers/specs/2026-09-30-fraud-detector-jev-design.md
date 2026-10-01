@@ -159,6 +159,8 @@ Cada query tem timeout (padrão 2 segundos). O pool do driver tem o tamanho do n
 
 `transaction_id` (formato `TX_<seq>`), `type`, `amount`, `time_step`, `orig_balance_before`, `orig_balance_after`, `dest_balance_before`, `dest_balance_after`, `balance_drop` (saldo anterior menos saldo posterior da origem) e `dest_is_merchant` (destino começa com "M"). Os nomes das contas não vão no `state`.
 
+**Campos opcionais.** Se o CSV tiver, depois das dez colunas obrigatórias, as colunas `paymentMethod`, `channel` e `category` (achadas pelo nome, em qualquer ordem), o `state` ganha `payment_method`, `channel` e `category`, nas execuções com e sem grafo, para o grafo continuar sendo a única diferença entre as duas. O `results.jsonl` guarda os mesmos três campos. Sem as colunas, os campos somem e o `state` fica como antes. Elas não vão para o Neo4j, então o `POST /transactions/evaluate` aceita os três como campos opcionais para o replay reproduzir o score. Os valores do dataset de estudo são sorteados ao acaso por `scripts/add_transaction_columns.py`, sem relação com `isFraud`.
+
 ### Exemplo de `state`
 
 ```json
@@ -299,7 +301,7 @@ A rota `/v1/systemone` é fixa.
 
 **`evaluate`:**
 
-- Com `seq`, faz o replay: calcula as features só com o passado daquela transação.
+- Com `seq`, faz o replay: calcula as features só com o passado daquela transação. Se a execução de origem usou as colunas opcionais do CSV, o pedido leva `payment_method`, `channel` e `category` da transação.
 - Sem `seq`, é uma transação hipotética "de agora". O cálculo considera todas as arestas com `step` menor ou igual ao `step` informado, que por padrão é o maior `step` do dataset. Nesse modo o `step` define tanto o "agora" quanto a janela de K horas.
 - Devolve decisão, score, features, o `state` enviado, a resposta bruta, os tempos e um subgrafo pequeno (vizinhança de 1 salto da origem e do destino, máximo 50 arestas cada).
 

@@ -71,6 +71,26 @@ func TestBuildStateComGrafo(t *testing.T) {
 	}
 }
 
+func TestBuildStateLevaAsColunasOpcionaisComESemGrafo(t *testing.T) {
+	tx := txExemplo()
+	tx.PaymentMethod, tx.Channel, tx.Category = "PIX", "MOBILE_APP", "FOOD"
+	for nome, gf := range map[string]*domain.GraphFeatures{"sem grafo": nil, "com grafo": {DestInDegree: 1}} {
+		m := estadoComoMapa(t, tx, gf)
+		if m["payment_method"] != "PIX" || m["channel"] != "MOBILE_APP" || m["category"] != "FOOD" {
+			t.Errorf("%s: colunas opcionais erradas no state: %v", nome, m)
+		}
+	}
+}
+
+func TestBuildStateSemAsColunasOpcionaisNaoGravaOsCampos(t *testing.T) {
+	m := estadoComoMapa(t, txExemplo(), nil)
+	for _, chave := range []string{"payment_method", "channel", "category"} {
+		if _, existe := m[chave]; existe {
+			t.Errorf("CSV sem a coluna não deveria mandar %s para o modelo", chave)
+		}
+	}
+}
+
 func TestFeatureQueryFor(t *testing.T) {
 	q := FeatureQueryFor(txExemplo(), 24, 3)
 	want := domain.FeatureQuery{Orig: "C111", Dest: "C222", BeforeSeq: 1029, AtStep: 4, WindowHours: 24, CycleMaxHops: 3}

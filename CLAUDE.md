@@ -56,12 +56,12 @@ Fluxo de um benchmark: sampler estratificado (uma passada no CSV), alimentador, 
 ### Regras que não podem quebrar
 
 - **Nada de espiar o futuro.** A régua do tempo é o `seq` (número da linha do CSV). Toda query de feature filtra `t.seq < $beforeSeq AND t.step <= $atStep`, e nenhuma lê `isFraud` ou `isFlagged`. Só o subgrafo lê `isFraud`, para pintar arestas do passado. Toda query nova precisa manter isso. Os guardas são `features_queries_test.go` (texto das queries) e `TestFeaturesSoEnxergamOPassado` em `leak_integration_test.go`.
-- **CSV ordenado por `step`.** O leitor devolve `csv.ErrUnsortedSteps` se o step diminuir. As dez primeiras colunas são obrigatórias, nessa ordem.
+- **CSV ordenado por `step`.** O leitor devolve `csv.ErrUnsortedSteps` se o step diminuir. As dez primeiras colunas são obrigatórias, nessa ordem. Depois delas o leitor procura pelo nome as colunas opcionais `paymentMethod`, `channel` e `category`. Quando existem, vão no `state` do modelo (nas duas variantes, com e sem grafo) e no `results.jsonl` como `payment_method`, `channel` e `category`. Quando não existem, somem dos dois e nada muda. Elas não vão para o Neo4j. O `scripts/add_transaction_columns.py` sorteia essas colunas num CSV do PaySim.
 - **Contrato do modelo.** `POST /v1/systemone` com o `state` como string JSON e a pergunta `is_fraud` do tipo `noul`. A resposta vem em `answers.is_fraud.noul`, entre 0 e 1. Resposta inválida vira erro daquela transação (`ErrInvalidResponse`, sem retry) e não derruba a execução.
 - **Mesma pergunta com e sem grafo** (`config/instructions.txt`), para a única diferença entre as duas variantes ser o `state`.
 - **Métricas.** A precisão reprojetada é `TPR*pi / (TPR*pi + FPR*(1-pi))`, com `pi` a prevalência real do universo elegível. Divisão por zero dá 0. Go e Python usam as mesmas fórmulas e o mesmo `testdata/metrics_golden.json`. Mudou a fórmula de um lado, mude o golden e o outro lado.
 - **Cypher.** Só `cycle_max_hops` entra por `Sprintf` (validado entre 1 e 5 antes). Todo o resto vai como parâmetro.
-- **Replay do simulador.** `POST /transactions/evaluate` com `seq` usa só o passado daquela transação. Para reproduzir o score de um benchmark, o pedido também precisa levar `graph`, `window_hours` e `cycle_max_hops` da execução de origem.
+- **Replay do simulador.** `POST /transactions/evaluate` com `seq` usa só o passado daquela transação. Para reproduzir o score de um benchmark, o pedido também precisa levar `graph`, `window_hours` e `cycle_max_hops` da execução de origem e, se o CSV tinha as colunas opcionais, os `payment_method`, `channel` e `category` da transação (o Neo4j não guarda esses valores).
 
 ### API REST
 

@@ -25,6 +25,11 @@ type Result struct {
 	BalanceDrop       float64 `json:"balance_drop"`
 	DestIsMerchant    bool    `json:"dest_is_merchant"`
 
+	// Somem do JSON quando o CSV da execução não tinha as colunas.
+	PaymentMethod string `json:"payment_method,omitempty"`
+	Channel       string `json:"channel,omitempty"`
+	Category      string `json:"category,omitempty"`
+
 	*GraphFeatures
 }
 
@@ -45,6 +50,9 @@ func NewResult(tx Transaction, gf *GraphFeatures) Result {
 		DestBalanceAfter:  tx.NewBalanceDest,
 		BalanceDrop:       tx.BalanceDrop(),
 		DestIsMerchant:    tx.DestIsMerchant(),
+		PaymentMethod:     tx.PaymentMethod,
+		Channel:           tx.Channel,
+		Category:          tx.Category,
 		GraphFeatures:     gf,
 	}
 }

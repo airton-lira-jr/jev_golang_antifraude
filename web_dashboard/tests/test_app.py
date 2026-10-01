@@ -229,7 +229,8 @@ def test_sortear_preenche_o_formulario_e_sem_execucao_avisa(monkeypatch):
     demo = novo_app()
     ev = eventos(demo)["tab3_sample"]
     valores = ev.fn("run_20260930_160000_aaaa")
-    assert len(valores) == len(ev.outputs) == 12
+    assert len(valores) == len(ev.outputs) == 15
+    assert valores[12:] == ("", "", "")  # essa execução não tem as colunas opcionais do CSV
     assert isinstance(valores[4], str) and isinstance(
         valores[9], str
     )  # step e seq são caixas de texto
@@ -244,7 +245,31 @@ def test_sortear_preenche_o_formulario_e_sem_execucao_avisa(monkeypatch):
     }
 
     sem = ev.fn(None)
-    assert len(sem) == 12 and avisos and "Execução A" in avisos[0]
+    assert len(sem) == 15 and avisos and "Execução A" in avisos[0]
+
+
+def test_sortear_preenche_as_colunas_opcionais_e_consultar_manda_no_pedido():
+    resumo = make_summary(run_id="run_20260930_160000_aaaa", graph=False)
+    df = make_results(graph=False, categorical=True)
+    client = FakeClient(runs=[(resumo, df)], evaluate_response=evaluate_response())
+    demo = novo_app(client)
+    valores = eventos(demo)["tab3_sample"].fn("run_20260930_160000_aaaa")
+    metodo, canal, categoria = valores[12:]
+    assert metodo and canal and categoria  # vêm da linha sorteada
+
+    ev = eventos(demo)["tab3_evaluate"]
+    sem = padrao(ev)  # a tela abre com as caixas vazias
+    ev.fn(*sem)
+    assert not {"payment_method", "channel", "category"} & set(client.evaluated[0])
+    com = padrao(ev)
+    com[10:13] = [metodo, canal, categoria]
+    ev.fn(*com)
+    enviado = client.evaluated[1]
+    assert (enviado["payment_method"], enviado["channel"], enviado["category"]) == (
+        metodo,
+        canal,
+        categoria,
+    )
 
 
 def test_sortear_com_a_api_fora_do_ar_avisa_em_vez_de_estourar(monkeypatch):

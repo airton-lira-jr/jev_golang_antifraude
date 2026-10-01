@@ -294,7 +294,8 @@ def test_sample_transaction_devolve_uma_linha_real_da_execucao():
     client = FakeClient(runs=two_runs())
     df = make_results(seed=7, graph=False)
     valores = handlers.sample_transaction(client, "run_20260930_160000_aaaa", rng=random.Random(1))
-    orig, dest, tipo, amount, step, ob, oa, db, da, seq = valores
+    orig, dest, tipo, amount, step, ob, oa, db, da, seq, *opcionais = valores
+    assert opcionais == ["", "", ""]  # a execução não tem as colunas opcionais do CSV
     linha = df[df["seq"] == seq].iloc[0]
     assert (orig, dest, tipo) == (linha["orig"], linha["dest"], linha["type"])
     assert (
@@ -306,6 +307,33 @@ def test_sample_transaction_devolve_uma_linha_real_da_execucao():
     assert (
         handlers.sample_transaction(client, "run_20260930_160000_aaaa", rng=random.Random(1))
         == valores
+    )
+
+
+def test_sample_transaction_leva_as_colunas_opcionais_da_execucao():
+    df = make_results(graph=False, categorical=True)
+    resumo = make_summary(run_id="run_20260930_160000_aaaa", graph=False)
+    client = FakeClient(runs=[(resumo, df)])
+    *_, seq, metodo, canal, categoria = handlers.sample_transaction(
+        client, "run_20260930_160000_aaaa", rng=random.Random(1)
+    )
+    linha = df[df["seq"] == seq].iloc[0]
+    assert (metodo, canal, categoria) == (
+        linha["payment_method"],
+        linha["channel"],
+        linha["category"],
+    )
+
+
+def test_payload_leva_as_colunas_opcionais_so_quando_preenchidas():
+    base = ("a", "b", "TRANSFER", 1, 5, 0, 0, 0, 0, None, None, 0.5)
+    p = handlers.build_evaluate_payload(*base, payment_method=" PIX ", channel="", category=None)
+    assert p["payment_method"] == "PIX"
+    assert "channel" not in p and "category" not in p
+    completo = handlers.build_evaluate_payload(*base, channel="WEB", category="FOOD")
+    assert completo["channel"] == "WEB" and completo["category"] == "FOOD"
+    assert not {"payment_method", "channel", "category"} & set(
+        handlers.build_evaluate_payload(*base)
     )
 
 

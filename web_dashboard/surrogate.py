@@ -38,6 +38,16 @@ GRAPH_FEATURES = [
 ]
 BINARY_FEATURES = {"dest_is_merchant", "first_transfer_between_pair", "cycle_detected"}
 
+# Colunas de texto do results.jsonl. Cada valor vira uma coluna 0 ou 1 chamada
+# `<coluna>_<valor>`. O par é (rótulo curto, como aparece nas regras). As colunas que não
+# existirem na execução (CSV sem elas) simplesmente não entram.
+CATEGORICAL = {
+    "type": ("tipo", "tipo"),
+    "payment_method": ("pagamento", "forma de pagamento"),
+    "channel": ("canal", "canal"),
+    "category": ("categoria", "categoria"),
+}
+
 LABELS = {
     "amount": "valor",
     "orig_balance_before": "saldo da origem antes",
@@ -57,10 +67,20 @@ LABELS = {
 }
 
 
+def _split_categorical(feature: str) -> tuple[str, str] | None:
+    """('channel', 'ATM') para 'channel_ATM'. None se a feature não for um valor de texto."""
+    for coluna in CATEGORICAL:
+        if feature.startswith(f"{coluna}_"):
+            return coluna, feature[len(coluna) + 1 :]
+    return None
+
+
 def label(feature: str) -> str:
     """Nome legível de uma feature."""
-    if feature.startswith("type_"):
-        return f"tipo {feature[5:]}"
+    categorica = _split_categorical(feature)
+    if categorica:
+        coluna, valor = categorica
+        return f"{CATEGORICAL[coluna][0]} {valor}"
     return LABELS.get(feature, feature)
 
 
@@ -96,15 +116,17 @@ class Surrogate:
 
 def feature_matrix(df: pd.DataFrame) -> pd.DataFrame:
     """Só números, sem nulos. O que faltava (por exemplo a idade de uma conta que nunca
-    apareceu) vira -1. O tipo da transação vira colunas 0 ou 1."""
+    apareceu) vira -1. O tipo da transação e as colunas opcionais do CSV (forma de pagamento,
+    canal e categoria) viram colunas 0 ou 1, uma por valor."""
     cols = {}
     for name in TABULAR_FEATURES + GRAPH_FEATURES:
         if name in df.columns:
             cols[name] = pd.to_numeric(df[name], errors="coerce").astype(float)
     x = pd.DataFrame(cols, index=df.index)
-    if "type" in df.columns:
-        for tipo in sorted(df["type"].dropna().unique()):
-            x[f"type_{tipo}"] = (df["type"] == tipo).astype(float)
+    for coluna in CATEGORICAL:
+        if coluna in df.columns:
+            for valor in sorted(df[coluna].dropna().unique()):
+                x[f"{coluna}_{valor}"] = (df[coluna] == valor).astype(float)
     return x.fillna(-1.0)
 
 
@@ -117,9 +139,11 @@ def _num(valor: float) -> str:
 def _condition(name: str, lower: float | None, upper: float | None) -> str:
     """Uma condição sobre uma feature. lower (exclusivo) e upper (inclusivo) são None
     quando não há limite naquele lado."""
-    if name.startswith("type_"):
-        tipo = name[5:]
-        return f"tipo é {tipo}" if lower is not None else f"tipo não é {tipo}"
+    categorica = _split_categorical(name)
+    if categorica:
+        coluna, valor = categorica
+        nome = CATEGORICAL[coluna][1]
+        return f"{nome} é {valor}" if lower is not None else f"{nome} não é {valor}"
     if name in BINARY_FEATURES:
         return f"{LABELS[name]}: {'sim' if lower is not None else 'não'}"
     partes = []

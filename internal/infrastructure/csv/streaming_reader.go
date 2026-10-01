@@ -48,6 +48,7 @@ func StreamReader(ctx context.Context, r io.Reader, fn func(domain.Transaction) 
 		return err
 	}
 	cr.FieldsPerRecord = len(header)
+	extras := acharOpcionais(header)
 
 	var seq int64
 	lastStep := -1
@@ -70,7 +71,7 @@ func StreamReader(ctx context.Context, r io.Reader, fn func(domain.Transaction) 
 		}
 		line, _ := cr.FieldPos(0)
 
-		tx, err := parseRecord(seq, rec)
+		tx, err := parseRecord(seq, rec, extras)
 		if err != nil {
 			return fmt.Errorf("linha %d: %w", line, err)
 		}
@@ -98,8 +99,45 @@ func conferirCabecalho(header []string) error {
 	return nil
 }
 
-func parseRecord(seq int64, rec []string) (domain.Transaction, error) {
-	tx := domain.Transaction{Seq: seq, Type: rec[1], Orig: rec[3], Dest: rec[6]}
+// colunasOpcionais guarda a posição de cada coluna opcional no cabeçalho, ou -1
+// quando o arquivo não tem a coluna.
+type colunasOpcionais struct {
+	paymentMethod, channel, category int
+}
+
+// acharOpcionais procura paymentMethod, channel e category pelo nome, depois das dez
+// obrigatórias. A ordem delas no arquivo não importa.
+func acharOpcionais(header []string) colunasOpcionais {
+	posicao := func(nome string) int {
+		for i := len(colunasObrigatorias); i < len(header); i++ {
+			if header[i] == nome {
+				return i
+			}
+		}
+		return -1
+	}
+	return colunasOpcionais{
+		paymentMethod: posicao("paymentMethod"),
+		channel:       posicao("channel"),
+		category:      posicao("category"),
+	}
+}
+
+// campo devolve o valor da coluna, ou vazio quando o arquivo não tem a coluna.
+func campo(rec []string, posicao int) string {
+	if posicao < 0 {
+		return ""
+	}
+	return rec[posicao]
+}
+
+func parseRecord(seq int64, rec []string, extras colunasOpcionais) (domain.Transaction, error) {
+	tx := domain.Transaction{
+		Seq: seq, Type: rec[1], Orig: rec[3], Dest: rec[6],
+		PaymentMethod: campo(rec, extras.paymentMethod),
+		Channel:       campo(rec, extras.channel),
+		Category:      campo(rec, extras.category),
+	}
 
 	step, err := strconv.Atoi(rec[0])
 	if err != nil {

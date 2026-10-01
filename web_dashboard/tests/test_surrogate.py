@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 
 import surrogate
-from tests.conftest import GRAPH_COLUMNS, make_results
+from tests.conftest import CATEGORICAL_COLUMNS, GRAPH_COLUMNS, make_results
 
 
 def test_label_traduz_features_e_tipos():
@@ -28,6 +28,41 @@ def test_feature_matrix_sem_grafo_so_tem_o_tabular(results_nograph):
     x = surrogate.feature_matrix(results_nograph)
     assert not (set(GRAPH_COLUMNS) & set(x.columns))
     assert "amount" in x.columns
+
+
+def test_feature_matrix_com_as_colunas_opcionais_vira_0_ou_1():
+    df = make_results(categorical=True)
+    x = surrogate.feature_matrix(df)
+    for coluna in CATEGORICAL_COLUMNS:
+        for valor in df[coluna].unique():
+            dummy = x[f"{coluna}_{valor}"]
+            assert set(np.unique(dummy)) <= {0.0, 1.0} and dummy.dtype == float
+            assert dummy.sum() == (df[coluna] == valor).sum()
+    assert not x.isna().any().any()
+
+    sem = surrogate.feature_matrix(make_results())
+    prefixos = tuple(f"{coluna}_" for coluna in CATEGORICAL_COLUMNS)
+    assert not [c for c in sem.columns if c.startswith(prefixos)]
+
+
+def test_rotulos_e_regras_das_colunas_opcionais():
+    assert surrogate.label("payment_method_PIX") == "pagamento PIX"
+    assert surrogate.label("channel_WEB") == "canal WEB"
+    assert surrogate.label("category_FOOD") == "categoria FOOD"
+    d = surrogate._describe
+    assert d("payment_method_PIX", ">", 0.5) == "forma de pagamento é PIX"
+    assert d("payment_method_PIX", "<=", 0.5) == "forma de pagamento não é PIX"
+    assert d("channel_ATM", ">", 0.5) == "canal é ATM"
+    assert d("category_FOOD", "<=", 0.5) == "categoria não é FOOD"
+
+
+def test_arvore_acha_a_coluna_opcional_que_separa_a_fraude():
+    df = make_results(n=600, seed=3, categorical=True)
+    df["channel"] = np.where(df["is_fraud"], "ATM", "WEB")  # só a fraude passa pelo ATM
+    s = surrogate.fit(df, "truth", 0.5, max_depth=2)
+    assert s.importances.loc[0, "feature"] in ("channel_ATM", "channel_WEB")
+    assert s.importances.loc[0, "importancia"] > 0.9
+    assert s.profiles["regra"].str.contains("canal").any()
 
 
 def test_fit_do_modelo_com_grafo_acha_o_que_pesa(results_graph):

@@ -17,21 +17,26 @@ import (
 // reproduzir a execução de origem: ausentes, valem consultar o grafo e os
 // padrões do servidor.
 type EvaluateRequest struct {
-	Orig              string   `json:"orig"`
-	Dest              string   `json:"dest"`
-	Type              string   `json:"type"`
-	Amount            float64  `json:"amount"`
-	Step              *int     `json:"step"`
-	OrigBalanceBefore float64  `json:"orig_balance_before"`
-	OrigBalanceAfter  float64  `json:"orig_balance_after"`
-	DestBalanceBefore float64  `json:"dest_balance_before"`
-	DestBalanceAfter  float64  `json:"dest_balance_after"`
-	Seq               *int64   `json:"seq"`
-	Model             string   `json:"model"`
-	Threshold         *float64 `json:"threshold"`
-	Graph             *bool    `json:"graph"`
-	WindowHours       *int     `json:"window_hours"`
-	CycleMaxHops      *int     `json:"cycle_max_hops"`
+	Orig              string  `json:"orig"`
+	Dest              string  `json:"dest"`
+	Type              string  `json:"type"`
+	Amount            float64 `json:"amount"`
+	Step              *int    `json:"step"`
+	OrigBalanceBefore float64 `json:"orig_balance_before"`
+	OrigBalanceAfter  float64 `json:"orig_balance_after"`
+	DestBalanceBefore float64 `json:"dest_balance_before"`
+	DestBalanceAfter  float64 `json:"dest_balance_after"`
+	// Opcionais. Para o replay reproduzir o score de um benchmark feito com um CSV que
+	// tem essas colunas, o pedido precisa levar os mesmos valores da transação.
+	PaymentMethod string   `json:"payment_method"`
+	Channel       string   `json:"channel"`
+	Category      string   `json:"category"`
+	Seq           *int64   `json:"seq"`
+	Model         string   `json:"model"`
+	Threshold     *float64 `json:"threshold"`
+	Graph         *bool    `json:"graph"`
+	WindowHours   *int     `json:"window_hours"`
+	CycleMaxHops  *int     `json:"cycle_max_hops"`
 }
 
 // EvaluateResponse é o que o simulador da Aba 3 mostra.
@@ -140,6 +145,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, req EvaluateRequest) (Evaluate
 		Step: step, Type: req.Type, Amount: req.Amount,
 		Orig: req.Orig, OldBalanceOrig: req.OrigBalanceBefore, NewBalanceOrig: req.OrigBalanceAfter,
 		Dest: req.Dest, OldBalanceDest: req.DestBalanceBefore, NewBalanceDest: req.DestBalanceAfter,
+		PaymentMethod: req.PaymentMethod, Channel: req.Channel, Category: req.Category,
 	}
 	if replay {
 		beforeSeq = *req.Seq

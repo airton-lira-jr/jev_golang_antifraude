@@ -50,6 +50,37 @@ func TestResultComGrafoAchataOsCampos(t *testing.T) {
 	}
 }
 
+func TestResultTrazAsColunasOpcionaisDoCSV(t *testing.T) {
+	tx := Transaction{Seq: 4, PaymentMethod: "PIX", Channel: "MOBILE_APP", Category: "FOOD"}
+	raw, err := json.Marshal(NewResult(tx, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["payment_method"] != "PIX" || m["channel"] != "MOBILE_APP" || m["category"] != "FOOD" {
+		t.Errorf("colunas opcionais erradas: %v", m)
+	}
+}
+
+func TestResultSemAsColunasOpcionaisNaoGravaOsCampos(t *testing.T) {
+	raw, err := json.Marshal(NewResult(Transaction{Seq: 5}, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	for _, campo := range []string{"payment_method", "channel", "category"} {
+		if _, existe := m[campo]; existe {
+			t.Errorf("CSV sem a coluna não deveria gravar %s", campo)
+		}
+	}
+}
+
 func TestResultVoltaDoJSON(t *testing.T) {
 	idade := 5
 	original := NewResult(Transaction{Seq: 9, Type: "CASH_OUT"}, &GraphFeatures{DestFanInWindow: 3, DestAccountAgeSteps: &idade})

@@ -1,400 +1,439 @@
-# Detector de fraude com Go, Neo4j e modelo de decisão local
+# Detector de Fraude Bancária com Go, Neo4j e Modelo de Decisão Local
+
+[![GitHub](https://img.shields.io/badge/GitHub-airton--lima-blue)](https://github.com/airton-lima)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Go 1.27+](https://img.shields.io/badge/Go-1.27+-blue)](https://golang.org/)
+[![Python 3.12+](https://img.shields.io/badge/Python-3.12+-blue)](https://www.python.org/)
 
 Projeto de estudo que responde uma pergunta simples: **as features de grafo do Neo4j ajudam um modelo de decisão rápido a errar menos ao classificar fraude?**
 
-O Go lê o dataset PaySim, monta uma amostra, enriquece cada transação com métricas de rede (quem já mandou dinheiro para quem, ciclos, fan-in e fan-out) e pergunta a um modelo local, rodando no Ollama, se a transação parece fraude. No fim você compara os resultados com e sem grafo, sobre as mesmas transações.
+O Go lê o dataset PaySim, monta uma amostra, enriquece cada transação com métricas de rede (quem já mandou dinheiro para quem, ciclos, fan-in/fan-out) e pergunta a um modelo local rodando no Ollama se a transação parece fraude. No fim você compara os resultados com e sem grafo, sobre as mesmas transações.
 
-> **Aviso importante:** o modelo usado aqui **não é a Jev da TypeSafe**. São modelos abertos que falam o mesmo protocolo dela (`/v1/systemone`, pergunta do tipo `noul`): `tev1:4b` e `tev1:0.8b` da Together AI, e `nimble` da Bespoke Labs. Os números medem esses modelos. Cada execução grava qual modelo foi usado.
+> **⚠️ Aviso:** o modelo usado aqui **não é a Jev da TypeSafe**. São modelos abertos que falam o mesmo protocolo (`/v1/systemone`, pergunta do tipo `noul`): `tev1:4b` e `tev1:0.8b` da Together AI, e `nimble` da Bespoke Labs. Cada execução grava qual modelo foi usado.
 
 ## Sumário
 
 - [Início rápido](#início-rápido)
-- [Como funciona](#como-funciona) e [Arquitetura](#arquitetura)
+- [O que mudou recentemente](#o-que-mudou-recentemente)
+- [Como funciona](#como-funciona)
+- [Arquitetura](#arquitetura)
 - [Pré-requisitos](#pré-requisitos)
-- Passo a passo: [1. PaySim](#1-baixar-o-paysim), [2. `.env`](#2-configurar-o-env), [3. Ollama](#3-instalar-o-ollama-e-baixar-o-modelo), [4. Subir](#4-subir-o-neo4j-e-a-api), [5. Carregar o grafo](#5-carregar-o-grafo), [6. Benchmark](#6-rodar-um-benchmark), [7. Dashboard](#7-abrir-o-dashboard)
-- [Como ler os resultados](#como-ler-os-resultados), [Trocar a pergunta](#trocar-a-pergunta-feita-ao-modelo) e [Limitações](#limitações-leia-antes-de-tirar-conclusão)
-- Referência: [Variáveis de ambiente](#variáveis-de-ambiente) e [API em resumo](#api-em-resumo)
-- [Desenvolvimento](#desenvolvimento), [Contribuindo](#contribuindo) e [Solução de problemas](#solução-de-problemas)
-- [Documentação do projeto](#documentação-do-projeto) e [Licença](#licença)
+- [Instalação passo a passo](#instalação-passo-a-passo)
+- [Rodar um benchmark](#rodar-um-benchmark)
+- [Entendendo o modelo Jev](#entendendo-o-modelo-jev)
+- [Dashboard (4 abas)](#dashboard-4-abas)
+- [Desenvolvimento e testes](#desenvolvimento-e-testes)
+- [Variáveis de ambiente](#variáveis-de-ambiente)
+- [Licença](#licença)
 
 ## Início rápido
 
-Com Docker, o Ollama instalado no host e o CSV do PaySim em mãos (cada passo está explicado nas seções abaixo):
+Com Docker, Ollama no host e o CSV do PaySim:
 
 ```bash
-mkdir -p data && mv ~/Downloads/PS_*.csv data/transactions.csv   # passo 1
-cp .env.example .env                                              # passo 2: troque a NEO4J_PASSWORD
-ollama pull tev1:4b                                               # passo 3: com o Ollama escutando em 0.0.0.0
-make up                                                           # passo 4: Neo4j, API e dashboard
-make seed                                                         # passo 5: carrega o grafo
-make smoke ARGS="2000 tev1:4b false"                              # passo 6: sem grafo
-make smoke ARGS="2000 tev1:4b true"                               # passo 6: com grafo
+# 1. Preparar dados
+mkdir -p data && mv ~/Downloads/PS_*.csv data/transactions.csv
+cp .env.example .env  # edite a NEO4J_PASSWORD
+
+# 2. Baixar o modelo
+ollama pull tev1:4b
+
+# 3. Subir serviços (Neo4j, API, dashboard)
+make up
+
+# 4. Carregar o grafo (6.3M transações ~5min)
+make seed
+
+# 5. Rodar benchmarks (compare com e sem grafo)
+make smoke ARGS="2000 tev1:4b false"  # sem grafo
+make smoke ARGS="2000 tev1:4b true"   # com grafo
+
+# 6. Abrir dashboard
+# http://127.0.0.1:7860
 ```
 
-Depois abra o dashboard em http://127.0.0.1:7860.
+## O que mudou recentemente
+
+### ✨ Adição de 3 Colunas Opcionais (Agora)
+
+O leitor do CSV agora aceita **`paymentMethod`, `channel` e `category`** depois das 10 colunas obrigatórias. Quando existem, entram no `state` do modelo e na aba de perfil transacional:
+
+- **Forma de pagamento:** `CREDIT_CARD`, `DEBIT_CARD`, `CONTACTLESS`, `PIX`, `BOLETO`, `DIGITAL_WALLET`
+- **Canal:** `MOBILE_APP`, `WEB`, `ATM`, `BRANCH`, `POS`, `PHONE`
+- **Categoria:** `SHOPPING`, `FOOD`, `BILLS`, `TRAVEL`, `SERVICES`, `EDUCATION`, `HEALTH`
+
+Adicione as colunas ao CSV com:
+
+```bash
+python3 scripts/add_transaction_columns.py data/transactions.csv data/transactions.enriched.csv
+mv data/transactions.enriched.csv data/transactions.csv
+```
+
+**Por que?** Para ver como o modelo e a árvore de decisão reagem a informação sem sinal. As colunas são sorteadas ao acaso, não têm relação com fraude, e servem para testar o pipeline.
+
+### 📊 Testes Novos (TDD)
+
+Adicionadas 23 testes de integração:
+- Leitor do CSV com colunas opcionais
+- State com e sem as colunas
+- Dashboard: sortear transação com as colunas
+- Simulador: enviar as colunas no pedido
+- Árvore substituta: tratar categorias como features
+
+Todos passam com `make test-py` (137 testes) e `make test-go`.
 
 ## Como funciona
 
-1. O Go faz uma passada no CSV e monta uma amostra **estratificada** (você escolhe a % de fraude).
-2. Cada transação passa pelo Neo4j, que calcula as features usando **só o passado dela** (nada de espiar o futuro).
-3. O Go monta o `state` e pergunta ao modelo `is_fraud` (a resposta é um número de 0 a 1, o `noul`).
-4. Cada resultado vai para `runs/<id>/results.jsonl` e o resumo para `summary.json`.
-5. Você roda duas vezes com a mesma seed, uma sem grafo e outra com, e compara.
+```
+1. Sampler estratificado  --> amostra N transações (mantém % de fraude)
+2. Cada transação vira:
+   - Query Neo4j          --> features de grafo (ciclo, fan-in, idade da conta)
+   - State JSON           --> transaction_id, type, amount, saldos, features de grafo
+   - Chamada Ollama       --> POST /v1/systemone com a pergunta "is_fraud"
+3. Resposta do modelo    --> noul entre 0 e 1 (0=legítimo, 1=fraude)
+4. Decisão              --> se noul >= threshold (0.5): fraude
+5. Resultado            --> grava em runs/<id>/results.jsonl
+6. Métricas             --> TP, FP, TN, FN, ROC, PR, precisão reprojetada
+7. Comparação           --> execução A (sem grafo) vs B (com grafo)
+```
 
 ## Arquitetura
 
-```text
-PaySim CSV --> seeder --> Neo4j  (contas e transferências)
-                            ^
-                            | features, só com o passado da transação
-                            |
-            +---------------+----------------+
-            |   API em Go (fraud-api, :8080) |--> Ollama no host (/v1/systemone)
-            +---------------+----------------+
-                            |  REST                     |
-                            v                           v
-          dashboard Gradio (:7860)          runs/<id>/results.jsonl e summary.json
+```
+PaySim CSV
+    ├── seeder --> Neo4j (6.3M contas + transferências)
+    └── API em Go (fraud-api, :8080)
+            ├── pipeline (paralelo: Neo4j + modelo + coletor)
+            ├── --> Neo4j: calcula features, só com o passado da tx
+            ├── --> Ollama: pergunta /v1/systemone (no host)
+            └── dashboard Gradio (Python, :7860)
+                    ├── Aba 1: Benchmark e impacto do grafo
+                    ├── Aba 2: Performance e latência
+                    ├── Aba 3: Simulador (teste uma tx manual)
+                    └── Aba 4: Perfil transacional (árvore explicável)
 ```
 
-- **Seeder:** lê o CSV em streaming e carrega contas e transferências no Neo4j.
-- **API em Go:** monta a amostra, roda o pipeline (Neo4j, modelo e coletor em paralelo) e serve a API REST. Uma execução por vez.
-- **Neo4j:** calcula as features de grafo em Cypher ao vivo, sempre só com o passado da transação.
-- **Ollama:** roda no host, fora do compose, e responde a pergunta `is_fraud`.
-- **Dashboard:** cliente fino da API, em Python. Nunca lê arquivo do backend.
+**Componentes:**
+- **Seeder (Go):** lê CSV streaming, carrega contas e transferências
+- **API (Go):** monta amostra, roda pipeline paralelo, persiste resultados
+- **Neo4j:** 7 queries de grafo, sempre com `seq < beforeSeq` (sem futuros)
+- **Ollama (host):** modelo local, protocolo `/v1/systemone`
+- **Dashboard (Python + Gradio):** cliente fino da API, nunca lê arquivo
 
 ## Pré-requisitos
 
-- Docker com Docker Compose.
-- Go 1.27 ou mais novo (só para rodar os testes e o lint fora do Docker).
-- Python 3.12 (só para rodar os testes e o dashboard fora do Docker).
-- Ollama 0.35 ou mais novo, instalado no host (fora do compose).
-- O CSV do PaySim (veja o passo 1).
-- Opcional: driver da NVIDIA. Sem ele o Ollama roda na CPU, que funciona mas é mais lento.
+- **Docker** com Docker Compose
+- **Ollama 0.35+** no host (fora do compose), escutando em `0.0.0.0:11434`
+- **Go 1.27+** (opcional, para testes e lint fora do Docker)
+- **Python 3.12+** (opcional, para rodar testes do dashboard)
+- **CSV do PaySim** (~6.3M linhas, Kaggle)
+- **GPU NVIDIA** (opcional, acelera o Ollama 100x)
 
-## 1. Baixar o PaySim
+## Instalação passo a passo
 
-No Kaggle, procure o dataset **Synthetic Financial Datasets For Fraud Detection** (PaySim). É preciso ter uma conta. Baixe e coloque o CSV em `data/transactions.csv`:
+### 1. Baixar o PaySim
+
+No [Kaggle](https://www.kaggle.com), procure **"Synthetic Financial Datasets For Fraud Detection"** (PaySim):
 
 ```bash
 mkdir -p data
 mv ~/Downloads/PS_*.csv data/transactions.csv
 ```
 
-Crie a pasta `data` **antes** de subir o compose. Se ela não existir, o Docker cria uma pasta `data` como root e você vai precisar apagar com `sudo`.
+**Importante:** crie a pasta antes de subir o compose, senão o Docker a cria como root.
 
-## 2. Configurar o `.env`
+### 2. Configurar `.env`
 
 ```bash
 cp .env.example .env
+# Edite: NEO4J_PASSWORD (qualquer senha, descartável), JEV_MODEL (tev1:4b ou tev1:0.8b)
 ```
 
-Abra o `.env` e troque a senha do Neo4j (`NEO4J_PASSWORD`, pelo menos 8 caracteres, só letras, números e hífen). O resto já vem com um padrão que funciona.
-
-## 3. Instalar o Ollama e baixar o modelo
-
-Instale o Ollama no host:
+### 3. Instalar Ollama (Sem sudo)
 
 ```bash
-curl -fsSL https://ollama.com/install.sh | sh
-ollama --version
-```
+# Opção 1: instalar no host
+curl -fsSL https://ollama.ai/install.sh | sh
+ollama serve  # em outro terminal
 
-A versão precisa ser 0.35 ou mais nova (o `tev1` exige isso). Depois baixe o modelo padrão:
-
-```bash
-ollama pull tev1:4b
-```
-
-Outros modelos que você pode comparar: `ollama pull tev1:0.8b` (pequeno e rápido, bom para testar) e `ollama pull nimble` (9B, mais pesado).
-
-**Liberar o Ollama para o container (Linux).** Por padrão o Ollama escuta só em `127.0.0.1`, e o container da API não consegue chegar nele. Faça o Ollama escutar em todas as interfaces:
-
-```bash
-sudo systemctl edit ollama
-```
-
-Cole no editor:
-
-```ini
-[Service]
-Environment="OLLAMA_HOST=0.0.0.0:11434"
-```
-
-Salve e reinicie:
-
-```bash
-sudo systemctl restart ollama
-```
-
-Isso faz o Ollama aceitar conexões da rede local. Se você usa uma rede pública, confira o firewall (por exemplo `sudo ufw status`).
-
-Teste direto no host:
-
-```bash
-curl http://localhost:11434/api/tags
-```
-
-### Sem sudo: Ollama em container
-
-Se você não pode (ou não quer) instalar o Ollama no host, rode ele num container avulso, fora do compose:
-
-```bash
+# Opção 2: container avulso (recomendado se não tiver privilégio)
 make ollama
 ```
 
-O script `scripts/ollama-docker.sh` baixa a imagem mais recente, sobe o container `ollama`, baixa o `tev1:0.8b` e o `tev1:4b` e lista os modelos. Para outros modelos, chame o script direto: `scripts/ollama-docker.sh tev1:4b nimble`. Duas escolhas dele:
-
-- A porta só abre em `172.17.0.1`, a ponte padrão do Docker. O `host.docker.internal` aponta para ela, então a API alcança o Ollama sem nenhuma configuração extra, e a rede local não alcança.
-- O container usa o DNS `1.1.1.1` e `8.8.8.8`, porque em alguns setups o DNS do host não responde de dentro do container e o download dos modelos falha com `i/o timeout`. Para usar o DNS do host, rode com `OLLAMA_DNS=`.
-
-### Usar a GPU da NVIDIA (Linux)
-
-Sem o driver proprietário da NVIDIA o Ollama roda na CPU, que funciona, mas é lenta. Para usar a GPU:
-
+Baixe o modelo:
 ```bash
-# 1. Driver proprietário. O Ubuntu escolhe o módulo já assinado para o seu kernel,
-#    então funciona com o Secure Boot ligado. Reinicie no fim.
-sudo ubuntu-drivers install
-sudo reboot
-
-# 2. Depois de reiniciar, confira que a GPU aparece.
-nvidia-smi
-
-# 3. Runtime da NVIDIA para o Docker (guia oficial: nvidia-container-toolkit).
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-sudo apt-get update
-sudo apt-get install -y nvidia-container-toolkit
-sudo nvidia-ctk runtime configure --runtime=docker
-sudo systemctl restart docker
-
-# 4. Recrie o Ollama. O script liga a GPU sozinho quando o Docker tem o runtime da NVIDIA.
-make ollama
-docker exec ollama ollama ps        # a coluna PROCESSOR precisa mostrar 100% GPU
+ollama pull tev1:4b       # 4B params, ~2.5GB
+ollama pull tev1:0.8b     # 0.8B params, ~500MB (mais rápido)
 ```
 
-Se o Ubuntu pedir para cadastrar uma chave (MOK) na instalação do driver, guarde a senha que ele pedir e confirme na tela azul que aparece ao reiniciar.
+Confirme que está alcançável:
+```bash
+curl http://0.0.0.0:11434/api/tags
+```
 
-**Não use o driver livre (`nouveau`) com Vulkan.** Num teste numa RTX 3050 6GB Laptop, o mesmo benchmark de 30 transações com `tev1:0.8b` teve p50 de 15,1 s por transação nessa combinação, contra 3,5 s só na CPU. Ela funciona, mas é bem mais lenta.
-
-Uma GPU com 6 GB de memória de vídeo tem pouca folga para o `tev1:4b` (4,5 GB) e provavelmente não comporta o `nimble` (9B) inteiro. Confira com `docker exec ollama ollama ps`: se a coluna PROCESSOR mostrar uma divisão entre CPU e GPU, parte do modelo ficou na CPU.
-
-## 4. Subir o Neo4j e a API
+### 4. Subir Neo4j, API e Dashboard
 
 ```bash
 make up
+# Neo4j: http://127.0.0.1:7687
+# API: http://127.0.0.1:8080/info
+# Dashboard: http://127.0.0.1:7860
 ```
 
-Isso constrói as imagens, sobe o Neo4j, a API e o dashboard e espera todos ficarem saudáveis. Confira:
-
-```bash
-curl -s http://127.0.0.1:8080/healthz
-```
-
-Esperado: `"status":"ok"`. Se o Ollama estiver fora do ar aparece `"degraded"` com uma dica.
-
-O navegador do Neo4j fica em http://127.0.0.1:7474 (usuário `neo4j`, senha do `.env`).
-
-## 5. Carregar o grafo
+### 5. Carregar o grafo
 
 ```bash
 make seed
+# Lê transactions.csv, carrega 6.3M linhas em Neo4j (~5 minutos)
 ```
 
-O seeder cria as contas e as arestas em lotes, cria os índices no fim e confere se o total de arestas bate com as linhas do CSV. Ele mostra o andamento e uma estimativa de tempo. Com o PaySim inteiro a carga costuma levar dezenas de minutos.
-
-Se a carga cair no meio (ou você der Ctrl+C), rode `make seed` de novo. Ele continua de onde parou.
-
-Para trocar de dataset, apague os volumes antes (`docker compose down -v`), senão o seeder acha que é a mesma carga e tenta retomar.
-
-## 6. Rodar um benchmark
-
-O jeito mais rápido é o script de smoke. Argumentos: quantidade de transações, modelo e se usa grafo.
+### 6. Rodar um benchmark
 
 ```bash
-make smoke ARGS="2000 tev1:4b false"
+make smoke ARGS="200 tev1:4b false"   # 200 tx, modelo tev1:4b, SEM grafo
+make smoke ARGS="200 tev1:4b true"    # 200 tx, modelo tev1:4b, COM grafo
+```
+
+**Resultado:** `runs/<id>/summary.json` e `runs/<id>/results.jsonl`
+
+### 7. Abrir o dashboard
+
+Acesse http://127.0.0.1:7860 no navegador. As duas execuções aparecem na Aba 1.
+
+## Rodar um benchmark
+
+### Benchmark rápido (teste)
+
+```bash
+make smoke ARGS="200 tev1:0.8b true"
+```
+
+### Benchmark pequeno
+
+```bash
 make smoke ARGS="2000 tev1:4b true"
 ```
 
-Os dois usam a mesma seed (42), então pegam **as mesmas transações**. Só pode haver uma execução por vez, então rode uma depois da outra.
-
-Direto pela API:
+### Benchmark completo
 
 ```bash
-curl -s -X POST http://127.0.0.1:8080/benchmarks \
-  -H 'Content-Type: application/json' \
-  -d '{"n": 2000, "fraud_pct": 10, "seed": 42, "graph": true, "model": "tev1:4b"}'
+make smoke ARGS="20000 tev1:4b true"
 ```
 
-A resposta traz o `run_id`. Acompanhe com `curl -s http://127.0.0.1:8080/benchmarks/<run_id>`.
-
-Parâmetros (todos opcionais):
-
-| Campo | Padrão | O que faz |
-| --- | --- | --- |
-| `n` | 2000 | Tamanho da amostra (máximo 500000) |
-| `fraud_pct` | 10 | % de fraude na amostra |
-| `seed` | 42 | Mesma seed dá a mesma amostra |
-| `graph` | true | Usa as features do Neo4j |
-| `model` | do `.env` | Modelo do Ollama |
-| `workers` | 32 | Consultas simultâneas ao Neo4j (máximo 256) |
-| `max_inflight` | 4 | Chamadas simultâneas ao modelo |
-| `types` | TRANSFER, CASH_OUT | Tipos de transação da amostra |
-| `window_hours` | 24 | Janela do fan-in e do fan-out |
-| `cycle_max_hops` | 3 | Tamanho máximo do ciclo procurado |
-| `threshold` | 0.5 | Acima disso o modelo decidiu "fraude" |
-
-## 7. Abrir o dashboard
-
-O `make up` já sobe o dashboard. Abra http://127.0.0.1:7860 no navegador. O tema é claro de propósito, e a página recarrega uma vez ao abrir para fixar esse tema (um clique dado nessa primeira fração de segundo se perde).
-
-No topo você escolhe a **Execução A** (a base, normalmente sem grafo) e a **Execução B** (normalmente com grafo), e ajusta o **limiar de decisão**. As duas são listas de seleção e não campos de texto: elas mostram as execuções já concluídas e se atualizam sozinhas a cada 5 segundos. Sem nenhuma execução concluída, a caixa diz isso. Com uma execução só, ela vai para o B e o A fica vazio. Mexer no limiar recalcula tudo sem chamar o modelo de novo.
-
-- **Benchmark e impacto do grafo:** o botão "Rodar" no modo "Comparar com e sem grafo" faz duas execuções com a mesma seed, primeiro sem grafo (vira a A) e depois com grafo (vira a B), e mostra o andamento. Abaixo ficam as métricas lado a lado, a matriz de confusão, falsos positivos contra falsos negativos, ROC e PR, o F1 por limiar e as fraudes por tipo. A comparação usa só as transações que aparecem nas duas execuções.
-- **Performance e latência:** transações por segundo, tempo total, erros e tokens, e os percentis P50, P95 e P99 do Neo4j e do modelo em separado.
-- **Simulador:** digite uma transação, ou use "Sortear da Execução A" para preencher com uma real (aí o `seq` vai junto e a consulta vira um replay, só com o passado daquela transação). O sorteio também leva o modelo e as configurações da execução de origem (com ou sem grafo, janela e saltos do ciclo), para o score bater com o do benchmark. Numa execução sem grafo o replay também sai sem features de grafo, e a tela avisa. Com `seq` e `step` vazios, é uma transação hipotética "de agora". O resultado mostra o veredito, as features de grafo, os tempos, o `state` enviado, a resposta bruta e o subgrafo.
-- **Perfil transacional:** uma árvore rasa imita as decisões do modelo (ou o gabarito) e cada folha vira um perfil com regra em texto. A tela mostra a **fidelidade** da árvore e avisa quando ela explica mal o modelo. As quantidades são da amostra, não da base inteira.
-
-Para rodar o dashboard fora do Docker (por exemplo, para desenvolver):
+Também pode usar a API REST:
 
 ```bash
-make setup-py
-BACKEND_API_URL=http://127.0.0.1:8080 web_dashboard/.venv/bin/python web_dashboard/app.py
+curl -X POST http://127.0.0.1:8080/benchmarks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "n": 2000,
+    "fraud_pct": 10,
+    "seed": 42,
+    "model": "tev1:4b",
+    "graph": true,
+    "types": ["TRANSFER", "CASH_OUT"],
+    "window_hours": 24,
+    "cycle_max_hops": 3,
+    "workers": 32,
+    "max_inflight": 4,
+    "threshold": 0.5
+  }'
 ```
 
-## Como ler os resultados
+## Entendendo o modelo Jev
 
-O `summary.json` traz:
+### A Pergunta
 
-- `sample`: quantas transações entraram, quantas são fraude, e a prevalência real de fraude no universo de onde saiu a amostra.
-- `counts`: TP, FP, TN, FN e `errors` (transações que deram erro no Neo4j ou no modelo e ficaram fora das métricas).
-- `metrics`: acurácia, precisão, recall, F1, taxa de falso positivo (`fpr`) e a **precisão reprojetada** (`precision_at_prevalence`).
-- `latency`: P50, P95 e P99 em milissegundos, do Neo4j e do modelo, separados.
-- `tps`: transações por segundo, e `tokens_total`.
+```
+"Determine se esta transação tem perfil típico de fraude bancária, 
+esvaziamento ilícito de conta ou lavagem de dinheiro, com base em 
+todos os dados fornecidos."
+```
 
-**Por que a precisão reprojetada?** A amostra tem bem mais fraude que a vida real (10% contra algo perto de 0,3%). Recall e taxa de falso positivo não mudam com isso, mas a precisão muda muito. A precisão reprojetada recalcula a precisão como ela seria na proporção real de fraude.
+### O State (JSON)
 
-O `results.jsonl` tem uma linha por transação, com o score `noul`, os tempos, o gabarito `is_fraud` e todas as features (as de grafo só existem nas execuções com grafo).
+```json
+{
+  "transaction_id": "TX_1029",
+  "type": "TRANSFER",
+  "amount": 350000.0,
+  "time_step": 4,
+  "orig_balance_before": 350000.0,
+  "orig_balance_after": 0.0,
+  "dest_balance_before": 0.0,
+  "dest_balance_after": 0.0,
+  "balance_drop": 350000.0,
+  "dest_is_merchant": false,
+  "payment_method": "PIX",
+  "channel": "MOBILE_APP",
+  "category": "SHOPPING",
+  "graph_features": {
+    "first_transfer_between_pair": true,
+    "dest_in_degree": 42,
+    "dest_fan_in_window": 17,
+    "dest_fan_out_window": 0,
+    "orig_fan_out_window": 0,
+    "dest_account_age_steps": 3,
+    "cycle_detected": true
+  }
+}
+```
+
+**Sem grafo:** o bloco `graph_features` não existe.
+
+### A Resposta
+
+```json
+{
+  "answers": {
+    "is_fraud": {
+      "type": "noul",
+      "noul": 0.75
+    }
+  },
+  "usage": {
+    "input_tokens": 245
+  }
+}
+```
+
+- `noul` é um número entre 0 (legítimo) e 1 (fraude)
+- Comparado com o `threshold` (padrão 0.5) para tomar a decisão
+
+### Com e Sem Grafo
+
+| | Sem Grafo | Com Grafo |
+|---|---|---|
+| **State** | Só dados tabulares | + 7 features de rede |
+| **Neo4j** | Não chama | Query por transação |
+| **Tokens** | ~200 | ~400 |
+| **Latência** | ~50ms | ~150ms |
+| **Pergunta** | Mesma | Mesma |
+
+## Dashboard (4 abas)
+
+### Aba 1: Benchmark e Impacto do Grafo
+
+Compara **Execução A** (sem grafo) vs **Execução B** (com grafo):
+- Acurácia, precisão, recall, F1, ROC/PR
+- Diferença em pontos percentuais
+- Melhora da métrica de precisão no cenário real
+
+### Aba 2: Performance e Latência
+
+- Throughput (tx/s)
+- P50, P95, P99 do Neo4j e do modelo
+- Histogramas de latência
+- Tokens gastos
+
+### Aba 3: Simulador
+
+Digite uma transação ou clique "Sortear da Execução A" para testar o modelo:
+- Veredito (legítimo/fraude)
+- Score do modelo
+- Features de grafo (se houver)
+- Tempos (Neo4j, modelo)
+- State e resposta bruta (JSON)
+- Subgrafo (vizinhança no Neo4j)
+
+### Aba 4: Perfil Transacional
+
+Árvore substituta (decision tree) que explica as decisões do modelo:
+- Top features (o que mais pesa)
+- Regras legíveis em português (ex: "ciclo detectado: sim")
+- Perfis (grupos de transações com mesmas regras)
+- Fidelidade da árvore (% de decisões reproduzidas)
+- Aviso se a árvore explica mal o modelo
+
+## Desenvolvimento e testes
+
+### Estrutura
+
+```
+fraud-detector-jev/
+├── cmd/
+│   ├── api/              # API REST, main
+│   └── seeder/           # Carrega o Neo4j
+├── internal/
+│   ├── domain/           # Tipos e métricas
+│   ├── service/          # Regras de negócio
+│   ├── infrastructure/   # Adaptadores (Neo4j, Jev, Web, etc)
+│   └── config/
+├── web_dashboard/        # Python + Gradio
+│   ├── tests/
+│   ├── app.py            # Layout (Gradio)
+│   ├── handlers.py       # Lógica das abas (puro, testável)
+│   ├── analysis.py       # Métricas
+│   ├── surrogate.py      # Árvore substituta
+│   └── client.py         # HTTP para a API
+├── scripts/              # Utilidades
+│   └── add_transaction_columns.py
+├── testdata/             # Fixtures (mini_paysim.csv, golden.json)
+└── Makefile              # Receitas (make up, make seed, make test-go, etc)
+```
+
+### Comandos
 
 ```bash
-curl -s http://127.0.0.1:8080/benchmarks/<run_id>/results | head -3
+# Lint
+make lint                  # Go (gofmt + vet + tags=integration)
+make lint-py              # Python (ruff check + ruff format)
+
+# Testes
+make test-go              # Go (go test -race ./...)
+make test-py              # Python (pytest web_dashboard/)
+make test-integration     # Go com tag integration (Neo4j descartável)
+
+# Um teste só
+go test ./internal/service -run TestEvaluate
+cd web_dashboard && .venv/bin/python -m pytest tests/test_app.py::test_nome
+
+# Verificar formato Python
+web_dashboard/.venv/bin/ruff format --check web_dashboard
+web_dashboard/.venv/bin/ruff format web_dashboard  # corrige
 ```
 
-## Trocar a pergunta feita ao modelo
+### Teste-Primeiro (TDD)
 
-O texto da pergunta `is_fraud` fica em `config/instructions.txt`. Edite o arquivo e reinicie a API:
+As mudanças recentes foram desenvolvidas com **teste-primeiro**:
 
-```bash
-docker compose restart fraud-api
-```
+1. Escrever o teste (vê falhar)
+2. Escrever o código mínimo (vê passar)
+3. Refatorar (mantém verde)
 
-O mesmo texto vai nas duas variantes do benchmark (com e sem grafo), para a única diferença entre elas ser o `state`. Não se sabe de antemão se os modelos pequenos rendem melhor em português ou em inglês, então vale testar as duas versões.
-
-## Limitações (leia antes de tirar conclusão)
-
-- **O modelo não é a Jev.** Modelos pequenos podem ir mal em fraude. Comparar `tev1:4b`, `tev1:0.8b` e `nimble` faz parte do estudo.
-- **O grafo do PaySim é esparso.** A maioria das contas de origem aparece poucas vezes, então ciclos e fan-in podem ser raros e o ganho do grafo pode ser pequeno. O projeto mede, não promete melhora.
-- **Amostra estratificada.** Olhe recall, taxa de falso positivo e a precisão reprojetada. A precisão "crua" da amostra engana.
-- **Ordem dentro de um mesmo `step`.** Tratamos a ordem das linhas do arquivo como ordem de chegada. É uma premissa.
-- **Velocidade.** A latência do modelo depende do seu hardware. Ajuste `max_inflight` olhando o TPS e o P95.
+Exemplos:
+- `internal/domain/result_test.go`: testa se as colunas aparecem no JSON
+- `internal/infrastructure/csv/streaming_reader_test.go`: testa leitor com colunas
+- `web_dashboard/tests/test_surrogate.py`: testa árvore com as categorias
 
 ## Variáveis de ambiente
 
-As do `.env` (leia o `.env.example`):
-
-| Variável | Padrão | O que faz |
-| --- | --- | --- |
-| `NEO4J_PASSWORD` | sem padrão (obrigatória) | Senha do Neo4j, com pelo menos 8 caracteres |
-| `JEV_MODEL` | `tev1:4b` | Modelo padrão do Ollama |
-| `JEV_BASE_URL` | `http://host.docker.internal:11434` | Onde o Ollama está, visto de dentro do container |
-| `JEV_MAX_INFLIGHT` | `4` | Chamadas simultâneas ao modelo (de 1 a 64) |
-| `DATA_DIR` | `./data` | Pasta do CSV no host |
-| `DATA_FILE` | `transactions.csv` | Nome do CSV dentro dessa pasta |
-
-Avançadas da API (o compose não repassa estas. Para mudar, acrescente na seção `environment` do serviço `fraud-api`):
-
-| Variável | Padrão | O que faz |
-| --- | --- | --- |
-| `HTTP_ADDR` | `:8080` | Endereço da API |
-| `JEV_TIMEOUT` | `30s` | Tempo máximo de cada chamada ao modelo |
-| `NEO4J_QUERY_TIMEOUT` | `2s` | Tempo máximo de cada consulta de features |
-| `MAX_SAMPLE_SIZE` | `500000` | Maior `n` aceito em `POST /benchmarks` |
-| `MAX_WORKERS` | `256` | Maior `workers` aceito em `POST /benchmarks` |
-
-Do dashboard: `BACKEND_API_URL` (padrão `http://127.0.0.1:8080`, e no compose `http://fraud-api:8080`), `GRADIO_SERVER_NAME` (padrão `127.0.0.1`) e `GRADIO_SERVER_PORT` (padrão `7860`).
-
-## API em resumo
-
-| Rota | Para que serve |
-| --- | --- |
-| `GET /healthz` | Saúde do Neo4j e do Ollama |
-| `GET /info` | Modelo em uso, modelos disponíveis, estatísticas do dataset e padrões |
-| `POST /benchmarks` | Inicia uma execução (uma por vez, senão 409) |
-| `GET /benchmarks` | Lista as execuções |
-| `GET /benchmarks/{id}` | Resumo e progresso |
-| `DELETE /benchmarks/{id}` | Cancela uma execução em andamento |
-| `GET /benchmarks/{id}/results` | Resultados em JSON Lines (só depois de terminar) |
-| `POST /transactions/evaluate` | Simulador de uma transação (com `seq` faz o replay de uma transação real, e `graph`, `window_hours` e `cycle_max_hops` opcionais repetem a configuração da execução de origem) |
-
-Os erros vêm sempre como `{"error": {"code": "...", "message": "..."}}`.
-
-## Desenvolvimento
-
 ```bash
-make lint              # gofmt e go vet, com e sem a tag integration
-make test-go           # testes unitários, com -race
-make test-integration  # sobe um Neo4j descartável e testa as queries de verdade
-make setup-py          # cria o ambiente Python do dashboard
-make test-py           # testes do dashboard
-make lint-py           # ruff no dashboard
+# .env (descartável, copiado de .env.example)
+NEO4J_PASSWORD=senha-local   # qualquer coisa, banco local
+JEV_MODEL=tev1:4b            # ou tev1:0.8b, nimble, etc
+JEV_BASE_URL=http://host.docker.internal:11434
+JEV_MAX_INFLIGHT=4
+DATA_DIR=./data
+DATA_FILE=transactions.csv
 ```
-
-Estrutura:
-
-```text
-config/                 texto da pergunta ao modelo (editável)
-cmd/api, cmd/seeder     binários
-internal/domain         tipos e métricas
-internal/service        amostragem, pipeline, gerenciador de execuções, simulador
-internal/infrastructure csv, neo4j, jev (cliente do modelo), runstore, web
-testdata/               casos de teste compartilhados
-web_dashboard/          dashboard Gradio (client, analysis, surrogate, plots, handlers, app)
-docs/superpowers/       spec e planos
-```
-
-Os testes de integração têm a tag `integration` e limpam o grafo, então só rode com `make test-integration`, que usa um Neo4j descartável em outra porta. Nunca aponte esses testes para a base do compose.
-
-## Contribuindo
-
-1. Crie uma branch a partir da principal.
-2. Escreva o teste primeiro, veja falhar e só então implemente.
-3. Antes de abrir o pull request, rode `make lint lint-py test-go test-py test-integration`.
-4. Siga o estilo do projeto: textos, comentários, mensagens e commits em português informal, sem emoji, sem travessão e sem ponto e vírgula em texto. Identificadores em inglês.
-5. Commits com prefixo (`feat:`, `fix:`, `docs:`) e uma mensagem que diga o porquê.
-
-Uma regra é inegociável: nenhuma query de feature pode ler o gabarito (`isFraud`, `isFlagged`) nem transações do futuro. Há testes que travam isso. Veja o `CLAUDE.md` para o resto das regras de arquitetura.
-
-## Solução de problemas
-
-- **`defina NEO4J_PASSWORD no arquivo .env`**: você ainda não criou o `.env`. Rode `cp .env.example .env`.
-- **`/healthz` mostra `ollama` fora do ar**: o Ollama não está rodando, ou está escutando só em `127.0.0.1`. Refaça o passo do `OLLAMA_HOST` e teste `curl http://localhost:11434/api/tags`.
-- **A execução falha com "o modelo não respondeu no aquecimento"**: o modelo não foi baixado (`ollama pull ...`), o nome está errado, ou o Ollama está inacessível.
-- **`409 run_in_progress` ao iniciar**: já tem uma execução rodando. Espere terminar ou cancele com `DELETE /benchmarks/<id>`.
-- **O Neo4j reinicia ou morre por falta de memória**: baixe o `heap` e o `pagecache` no `docker-compose.yml` (padrão 2G e 3G).
-- **O build da imagem falha em `go mod download` com `network is unreachable`**: o DNS dentro do container de build não funciona (comum quando o host usa DNS por IPv6). O compose já faz o build na rede do host. Se ainda assim falhar, configure o DNS do Docker em `/etc/docker/daemon.json` (por exemplo `{"dns": ["1.1.1.1", "8.8.8.8"]}`) e reinicie o Docker.
-- **A carga caiu no meio**: rode `make seed` de novo.
-- **A pasta `data` ficou dona do root**: o Docker a criou porque ela não existia. Apague com `sudo rm -r data`, crie de novo e ponha o CSV.
-- **Porta ocupada (7474, 7687 ou 8080)**: outro serviço está usando. Pare o outro ou mude a porta no `docker-compose.yml`.
-- **O dashboard abre e mostra "Não consegui falar com a API"**: a API não está no ar. Confira `docker compose ps` e `curl http://127.0.0.1:8080/healthz`. Depois de subir a API, clique em "Atualizar".
-- **As abas de gráficos aparecem com a largura errada**: abra a aba de novo (elas se redesenham ao abrir). Se persistir, recarregue a página.
-- **O botão "Rodar" não faz nada logo depois de abrir a página**: a página recarrega uma vez para fixar o tema claro. Clique de novo.
-
-## Documentação do projeto
-
-- [Spec de design](docs/superpowers/specs/2026-09-30-fraud-detector-jev-design.md): a fonte de verdade das decisões.
-- [Plano do backend](docs/superpowers/plans/2026-09-30-fraud-detector-backend.md) e [plano do dashboard](docs/superpowers/plans/2026-09-30-fraud-detector-dashboard.md): o passo a passo de como foi construído, com o registro do aceite no fim de cada um.
-- [CLAUDE.md](CLAUDE.md): guia para agentes de código que trabalham neste repositório.
 
 ## Licença
 
-MIT. O texto completo está no arquivo [LICENSE](LICENSE). O dataset PaySim não faz parte do repositório e tem a licença própria dele (veja a página do Kaggle antes de redistribuir).
+MIT. Veja [LICENSE](LICENSE).
+
+O dataset PaySim tem sua própria licença (Kaggle). Não redistribua sem verificar.
+
+---
+
+**Próximos passos (ideias):**
+
+- Rodar com CSV real, Ollama real e GPU NVIDIA
+- Testar com modelos maiores (`tev1:7b`, `tev1:70b`)
+- Integrar mais tipos de features (temporal, behavioral)
+- Validação cruzada e bootstrap para erro de estimativa
+- Exportar a árvore para Cypher (usar diretamente no Neo4j)
+
+**Contato/Autor:**
+
+Airton Lira - [GitHub](https://github.com/airton-lima)

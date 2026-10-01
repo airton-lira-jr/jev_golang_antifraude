@@ -28,6 +28,12 @@ type Transaction struct {
 	OldBalanceDest float64
 	NewBalanceDest float64
 	IsFraud        bool
+
+	// Colunas opcionais do CSV (paymentMethod, channel e category). Ficam vazias
+	// quando o arquivo não tem a coluna.
+	PaymentMethod string
+	Channel       string
+	Category      string
 }
 
 // ID é o identificador que o PaySim não tem, derivado do Seq.

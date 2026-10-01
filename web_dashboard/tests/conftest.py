@@ -17,15 +17,35 @@ GRAPH_COLUMNS = [
 ]
 
 
+# Colunas opcionais do CSV (paymentMethod, channel e category) como vêm no results.jsonl.
+CATEGORICAL_COLUMNS = {
+    "payment_method": [
+        "CREDIT_CARD",
+        "DEBIT_CARD",
+        "CONTACTLESS",
+        "PIX",
+        "BOLETO",
+        "DIGITAL_WALLET",
+    ],
+    "channel": ["MOBILE_APP", "WEB", "ATM", "BRANCH", "POS", "PHONE"],
+    "category": ["SHOPPING", "FOOD", "BILLS", "TRAVEL", "SERVICES", "EDUCATION", "HEALTH"],
+}
+
+
 def _sigmoid(x):
     return 1 / (1 + np.exp(-x))
 
 
 def make_results(
-    n: int = 400, seed: int = 0, graph: bool = True, n_errors: int = 0
+    n: int = 400,
+    seed: int = 0,
+    graph: bool = True,
+    n_errors: int = 0,
+    categorical: bool = False,
 ) -> pd.DataFrame:
     """Gera n transações. Com a mesma seed, graph=True e graph=False trazem as mesmas
-    transações e só mudam a nota do modelo e as colunas de grafo."""
+    transações e só mudam a nota do modelo e as colunas de grafo. Com categorical=True entram
+    as três colunas opcionais do CSV, sorteadas sem relação com a fraude."""
     base = np.random.default_rng(seed)
     is_fraud = base.random(n) < 0.25
     tipo = np.where(base.random(n) < 0.5, "TRANSFER", "CASH_OUT")
@@ -79,6 +99,10 @@ def make_results(
         df["orig_fan_out_window"] = fan_out_orig
         df["dest_account_age_steps"] = age
         df["cycle_detected"] = cycle
+    if categorical:
+        sorteio = np.random.default_rng(seed + 2000)
+        for coluna, valores in CATEGORICAL_COLUMNS.items():
+            df[coluna] = sorteio.choice(valores, n)
     if n_errors:
         df.loc[: n_errors - 1, "noul"] = np.nan
         df["error"] = None

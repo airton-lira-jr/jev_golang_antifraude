@@ -106,6 +106,38 @@ func TestEvaluateReplayUsaOPassadoDaTransacao(t *testing.T) {
 	}
 }
 
+func TestEvaluateReplayLevaAsColunasOpcionaisParaOState(t *testing.T) {
+	m := novoAvaliador(0.8)
+	req := pedidoBase()
+	seq := int64(1029)
+	req.Seq = &seq
+	req.PaymentMethod, req.Channel, req.Category = "CONTACTLESS", "POS", "TRAVEL"
+
+	resp, err := m.ev.Evaluate(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var estado map[string]any
+	if err := json.Unmarshal(resp.State, &estado); err != nil {
+		t.Fatal(err)
+	}
+	if estado["payment_method"] != "CONTACTLESS" || estado["channel"] != "POS" || estado["category"] != "TRAVEL" {
+		t.Errorf("o replay precisa mandar as colunas opcionais no state, veio %v", estado)
+	}
+
+	semColunas, err := novoAvaliador(0.8).ev.Evaluate(context.Background(), pedidoBase())
+	if err != nil {
+		t.Fatal(err)
+	}
+	estado = map[string]any{}
+	_ = json.Unmarshal(semColunas.State, &estado)
+	for _, chave := range []string{"payment_method", "channel", "category"} {
+		if _, existe := estado[chave]; existe {
+			t.Errorf("pedido sem as colunas não deveria ter %s no state", chave)
+		}
+	}
+}
+
 func TestEvaluateSemSeqEhTransacaoDeAgora(t *testing.T) {
 	m := novoAvaliador(0.2)
 	resp, err := m.ev.Evaluate(context.Background(), pedidoBase())

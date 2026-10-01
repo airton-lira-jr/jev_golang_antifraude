@@ -186,6 +186,23 @@ def build_app(client: BackendClient) -> gr.Blocks:
                             oa = gr.Number(value=0, label="Saldo da origem depois")
                             db = gr.Number(value=0, label="Saldo do destino antes")
                             da = gr.Number(value=0, label="Saldo do destino depois")
+                        with gr.Accordion("Colunas opcionais do dataset", open=False):
+                            gr.Markdown(
+                                "Só valem se o CSV da execução tinha essas colunas. "
+                                "Vazio significa que o modelo não recebe o campo."
+                            )
+                            metodo_pagamento = gr.Textbox(
+                                value="",
+                                max_lines=1,
+                                placeholder="vazio",
+                                label="Forma de pagamento",
+                            )
+                            canal = gr.Textbox(
+                                value="", max_lines=1, placeholder="vazio", label="Canal"
+                            )
+                            categoria = gr.Textbox(
+                                value="", max_lines=1, placeholder="vazio", label="Categoria"
+                            )
                         seq = gr.Textbox(
                             value="",
                             max_lines=1,
@@ -412,7 +429,8 @@ def build_app(client: BackendClient) -> gr.Blocks:
         # Aba 3
         campos = [orig, dest, tipo, amount, step, ob, oa, db, da, seq]
 
-        saidas_sorteio = [*campos, model3, replay_cfg]
+        colunas_opcionais = [metodo_pagamento, canal, categoria]
+        saidas_sorteio = [*campos, model3, replay_cfg, *colunas_opcionais]
 
         def on_sample(run_id):
             try:
@@ -430,24 +448,33 @@ def build_app(client: BackendClient) -> gr.Blocks:
             )  # step e seq são caixas de texto
             # o modelo e as configurações da execução vão junto, para o replay reproduzir o score
             modelo = gr.update(value=config["model"]) if config["model"] else gr.skip()
-            return (*valores, modelo, config)
+            return (*valores[:10], modelo, config, *valores[10:])
 
         sample_btn.click(on_sample, [run_a], saidas_sorteio, api_name="tab3_sample")
 
         saidas3 = [notice3, verdict, features, timings, state_json, raw_json, plot_subgraph]
 
         def on_evaluate(*valores):
-            *formulario, modelo, limiar, config = valores
+            *formulario, metodo, canal_, categoria_, modelo, limiar, config = valores
             try:
                 payload = handlers.build_evaluate_payload(
-                    *formulario, modelo, limiar, replay=config
+                    *formulario,
+                    modelo,
+                    limiar,
+                    replay=config,
+                    payment_method=metodo,
+                    channel=canal_,
+                    category=categoria_,
                 )
             except handlers.UserMessage as aviso:
                 return handlers.Tab3View.empty(f"**Erro:** {aviso}").as_tuple()
             return handlers.evaluate_view(client, payload).as_tuple()
 
         eval_btn.click(
-            on_evaluate, [*campos, model3, threshold, replay_cfg], saidas3, api_name="tab3_evaluate"
+            on_evaluate,
+            [*campos, *colunas_opcionais, model3, threshold, replay_cfg],
+            saidas3,
+            api_name="tab3_evaluate",
         )
 
         # Aba 4 (também redesenha ao abrir)
